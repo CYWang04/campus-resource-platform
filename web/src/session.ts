@@ -5,6 +5,7 @@ export interface User {
   id: string;
   username: string;
   displayName: string;
+  departmentCode: string;
   permissions: string[];
 }
 export const useSession = defineStore("session", () => {

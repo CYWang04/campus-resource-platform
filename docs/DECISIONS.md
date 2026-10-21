@@ -72,4 +72,13 @@ API、状态或数据库变更须由受影响组评审。实现验证记录见 I
 - 最小工单采用报修→维修人员直接开始→完工→管理员验收；正式派单、超时升级、评价后续实现。
 - 命令幂等键作用域为用户+键；来源操作按 operationId 去重，记录与来源墓碑保留至数据库重置。重复请求返回当前工单视图；内部历史结果另带 currentSourceState，避免误用历史生效状态。
 
+## 2026-10-21 M2/M3 增量实现选择（待团队评审）
+
+下列实现替代本页上一节中“维修人员直接开始”和“仅开放 M3 来源”的前期限制：
+
+- M2 使用 `DEPARTMENT_PENDING → RESOURCE_PENDING → RESOURCE_SYNC_PENDING → APPROVED` 两级审批状态；最终批准前不占用教室，由 M1 锁定教室并检查资源版本、个人预约、维修和其他整室占用。
+- M1 开放 `M2_ROOM_APPLICATION` 时段来源及 `M3_MAINTENANCE` 维修来源。整室批准和撤销使用持久化同步任务与来源版本，不直接跨库写入。
+- M3 使用 `REPORTED → ASSIGNED → START_PENDING → REPAIRING → AWAITING_ACCEPTANCE → RELEASE_PENDING → CLOSED` 主状态链；管理员派单，指定维修人员处理，管理员可验收退回，报修人可在关闭后评价。
+- 24/48 小时升级由 M3 定时扫描持久化时间字段实现。维修取消个人预约和已批准整室申请仍是后续一致性任务。
+
 关联代码与机器可读子集见 [实现记录](IMPLEMENTATION.md)、[OpenAPI](../contracts/foundation.openapi.json)。P01～P14 的团队评审状态保持不变。

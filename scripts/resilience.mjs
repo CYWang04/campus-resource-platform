@@ -32,6 +32,8 @@ async function wait(id, token, state) {
 const student = await login('student'), tech = await login('technician'), manager = await login('manager');
 const room = (await api('/rooms', student)).items[0].id;
 const order = await api('/work-orders', student, { roomId: room, title: '依赖恢复验收', description: '模拟资源服务暂时停止' });
+const worker = (await api('/directory/maintenance-workers', manager))[0];
+await api('/work-orders/' + order.id + '/assign', manager, { repairerId: worker.id, repairerName: worker.displayName, repairerEmail: worker.email });
 compose('stop', 'm1');
 try {
   const pending = await api('/work-orders/' + order.id + '/start', tech, {});

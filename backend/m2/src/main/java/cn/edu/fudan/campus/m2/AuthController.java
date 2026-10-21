@@ -51,13 +51,29 @@ public class AuthController {
               case "manager" ->
                   List.of(
                       "resources:read",
+                      "resources:manage",
+                      "reservations:stats",
                       "workorders:create",
                       "workorders:read",
                       "workorders:accept",
+                      "workorders:assign",
+                      "roomapplications:read",
+                      "roomapplications:approve:department",
+                      "roomapplications:approve:resource",
                       "audit:read");
               case "technician" ->
                   List.of("resources:read", "workorders:read", "workorders:repair");
-              default -> List.of("resources:read", "workorders:create");
+              default ->
+                  List.of(
+                      "resources:read",
+                      "reservations:create",
+                      "reservations:read",
+                      "reservations:cancel",
+                      "reservations:checkin",
+                      "roomapplications:create",
+                      "roomapplications:read",
+                      "roomapplications:withdraw",
+                      "workorders:create");
             })
           db.update(
               "INSERT IGNORE INTO permissions(user_id,permission) VALUES(?,?)", id, permission);
@@ -110,6 +126,13 @@ public class AuthController {
     return validate(input.token());
   }
 
+  @GetMapping("/api/v1/directory/maintenance-workers")
+  public Object maintenanceWorkers(@RequestHeader(value = "Authorization", required = false) String auth) {
+    var actor = validate(bearer(auth));
+    if (!actor.permissions().contains("workorders:assign")) throw Api.fail(403,"FORBIDDEN","没有派单权限");
+    return Api.ok(db.queryForList("SELECT u.id,u.username,u.display_name AS displayName,u.email FROM users u JOIN permissions p ON p.user_id=u.id WHERE p.permission='workorders:repair' AND u.enabled=TRUE ORDER BY u.display_name"));
+  }
+
   private String bearer(String auth) {
     if (auth == null || !auth.startsWith("Bearer ")) throw Api.fail(401, "UNAUTHENTICATED", "请先登录");
     return auth.substring(7);
@@ -133,6 +156,7 @@ public class AuthController {
         (String) u.get("username"),
         (String) u.get("display_name"),
         (String) u.get("email"),
+        (String) u.get("department_code"),
         db.queryForList("SELECT permission FROM permissions WHERE user_id=?", String.class, id));
   }
 }

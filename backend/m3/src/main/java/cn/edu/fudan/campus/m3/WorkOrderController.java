@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 public class WorkOrderController {
+  public record NotificationEvent(@jakarta.validation.constraints.NotBlank String eventId,@jakarta.validation.constraints.NotBlank String userId,@jakarta.validation.constraints.Email String email,@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max=500) String message){}
   private final org.springframework.web.client.RestClient resources;
   private final Orders orders;
   private final Identity identity;
@@ -77,6 +78,12 @@ public class WorkOrderController {
     return Api.ok(orders.action(identity.require(auth, null), key, id, action));
   }
 
+  @PostMapping("/api/v1/work-orders/{id}/assign") public Object assign(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Assignment input){return Api.ok(orders.assign(identity.require(auth,null),key,id,input));}
+  @PostMapping("/api/v1/work-orders/{id}/complete-with-note") public Object complete(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Note input){return Api.ok(orders.complete(identity.require(auth,null),key,id,input));}
+  @PostMapping("/api/v1/work-orders/{id}/reject-acceptance") public Object reject(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Note input){return Api.ok(orders.rejectAcceptance(identity.require(auth,null),key,id,input));}
+  @PostMapping("/api/v1/work-orders/{id}/cancel") public Object cancel(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id){return Api.ok(orders.cancel(identity.require(auth,null),key,id));}
+  @PostMapping("/api/v1/work-orders/{id}/rating") public Object rate(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Rating input){return Api.ok(orders.rate(identity.require(auth,null),key,id,input));}
+
   @GetMapping("/api/v1/notifications")
   public Object notifications(
       @RequestHeader(value = "Authorization", required = false) String auth) {
@@ -93,4 +100,7 @@ public class WorkOrderController {
     identity.require(auth, "audit:read");
     return Api.ok(db.queryForList("SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 100"));
   }
+
+  @PostMapping("/internal/v1/notifications")
+  public Object receiveNotification(@RequestHeader(value="X-Service-Key",required=false)String key,@Valid @RequestBody NotificationEvent input){identity.internal(key);db.update("INSERT IGNORE INTO notifications(id,user_id,email,message,external_event_key) VALUES(?,?,?,?,?)",Ids.uuid(),input.userId(),input.email(),input.message(),input.eventId());return Api.ok(Map.of("accepted",true,"eventId",input.eventId()));}
 }

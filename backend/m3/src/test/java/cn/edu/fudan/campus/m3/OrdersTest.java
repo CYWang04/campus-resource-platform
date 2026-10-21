@@ -23,7 +23,7 @@ class OrdersTest {
         .thenReturn(List.of(Map.of("state", "AWAITING_ACCEPTANCE", "repairer_id", ID)));
     var actor =
         new Identity.Actor(
-            ID, "repairer", "维修人员", "test@campus.test", List.of("workorders:accept"));
+            ID, "repairer", "维修人员", "test@campus.test", "CS", List.of("workorders:accept"));
     var error =
         assertThrows(
             Api.Failure.class, () -> new Orders(db).action(actor, "test-key-123", ID, "accept"));
@@ -40,7 +40,7 @@ class OrdersTest {
     when(db.queryForList(contains("FOR UPDATE"), anyString()))
         .thenReturn(List.of(Map.of("state", "REPAIRING", "repairer_id", "someone-else")));
     var actor =
-        new Identity.Actor(ID, "manager", "管理员", "test@campus.test", List.of("workorders:accept"));
+        new Identity.Actor(ID, "manager", "管理员", "test@campus.test", "CS", List.of("workorders:accept"));
     var error =
         assertThrows(
             Api.Failure.class, () -> new Orders(db).action(actor, "test-key-456", ID, "accept"));

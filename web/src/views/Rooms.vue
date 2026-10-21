@@ -63,7 +63,7 @@ onMounted(load);
           prop="powerType"
           label="插座类型"
       /></el-table>
-      <p class="muted">座位预约与签到将在后续 M1 业务开发中接入。</p>
+      <p class="muted">座位预约、每日动态码签到及插座类型筛选已接入；请从“座位预约”进入完整操作。</p>
     </article>
     <el-empty
       v-if="!loading && !rooms.length"

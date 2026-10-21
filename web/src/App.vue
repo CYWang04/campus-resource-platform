@@ -48,6 +48,11 @@ async function login() {
       <div class="brand">校园资源<span>Campus Resource Platform</span></div>
       <nav>
         <router-link to="/">学习空间</router-link
+        ><router-link
+          v-if="session.user.permissions.includes('reservations:read')"
+          to="/reservations"
+          >座位预约</router-link
+        ><router-link v-if="session.user.permissions.includes('resources:manage')" to="/m1-admin">资源管理</router-link
         ><router-link to="/applications">教室申请</router-link
         ><router-link to="/work-orders">物业报修</router-link
         ><router-link to="/notifications">通知中心</router-link>

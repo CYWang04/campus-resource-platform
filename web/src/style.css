@@ -128,6 +128,14 @@ section {
   grid-template-columns: 1fr 2fr;
   gap: 20px;
 }
+.reservation-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 18px;
+}
+.el-date-editor.el-input {
+  width: 100%;
+}
 .muted,
 small {
   font-size: 12px;
@@ -175,6 +183,9 @@ small {
     padding: 14px 20px;
   }
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .reservation-grid {
     grid-template-columns: 1fr;
   }
   .page-title {

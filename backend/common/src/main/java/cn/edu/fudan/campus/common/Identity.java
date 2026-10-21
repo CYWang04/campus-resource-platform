@@ -66,5 +66,5 @@ public class Identity {
   }
 
   public record Actor(
-      String id, String username, String displayName, String email, List<String> permissions) {}
+      String id, String username, String displayName, String email, String departmentCode, List<String> permissions) {}
 }

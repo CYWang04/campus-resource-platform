@@ -19,7 +19,13 @@ jobs:
       - run: npm ci && npm run build
         working-directory: web
       - run: pwsh -File scripts/init-local.ps1
-      - run: docker compose --env-file .env -f infra/compose.yml up --build -d --wait
+      - name: Build and start the application
+        run: |
+          if ! docker compose --env-file .env -f infra/compose.yml up --build -d --wait; then
+            docker compose --env-file .env -f infra/compose.yml ps --all
+            docker compose --env-file .env -f infra/compose.yml logs --no-color mysql
+            exit 1
+          fi
         env:
           COMPOSE_PARALLEL_LIMIT: '1'
       - run: node scripts/smoke.mjs

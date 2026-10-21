@@ -2,7 +2,7 @@
 
 软件过程管理与工程伦理课程 PJ：自习座位预约、整教室申请与审批、物业报修，以及后续自然语言业务 Agent。
 
-> 2026-10-20：项目处于前期设计与公共基础准备阶段。当前仓库提供交接资料；应用代码、OpenAPI 文件、数据库迁移、Compose 和流水线尚未创建，系统尚不能启动。
+> 2026-10-21：已创建并启动前期公共底座：一个 Vue 前端、三个 Java 服务、MySQL 独立数据库、登录权限、资源与简化维修链路。前后端构建及本地链路检查通过；完整预约、审批、派单评价与 Agent 尚未实现。
 
 ## 新成员 / Agent 从这里开始
 
@@ -24,13 +24,14 @@
 
 采用一个 Vue 前端、三个 Java/Spring Boot 服务、一个 MySQL 实例和三个独立数据库。公共层按能力归属，不额外建立 D 服务。技术方向已由项目发起人确认；具体公共层归属和实现规则仍需全组评审，详见决策记录。
 
-当前重点是先完成“统一规则 + 可运行骨架 + 一条真实跨模块链路”，再正式分工扩展业务。完整 Agent 放在基础系统验收后。
+当前已实现“可运行骨架 + 一条真实跨模块链路”的本机版本，待团队评审与共同验收后正式分工扩展业务。完整 Agent 放在基础系统验收后。
 
 ## 文档导航
 
 | 文档 | 用途 |
 | --- | --- |
 | [HANDOFF](docs/HANDOFF.md) | 当前进度、下一步、外部条件与接手说明 |
+| [ACCEPTANCE](docs/ACCEPTANCE.md) | 组员启动、公开测试账号、五分钟演示、验收清单与记录模板 |
 | [REQUIREMENTS](docs/REQUIREMENTS.md) | 任务书要求、来源页码、最终验收 |
 | [DECISIONS](docs/DECISIONS.md) | 已确认选择、拟议默认值、待评审项 |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | 技术栈、模块边界、公共层及数据归属 |
@@ -38,10 +39,11 @@
 | [FOUNDATION](docs/FOUNDATION.md) | 分工前范围及可以开始并行开发的门槛 |
 | [TASKS](docs/TASKS.md) | 带依赖与验收条件的后续工作清单 |
 | [ESTIMATES](docs/ESTIMATES.md) | 代码量、工作量及估算口径 |
+| [DEVELOPMENT](docs/DEVELOPMENT.md) | VS Code、JDK、Node、Docker 和扩展准备 |
 | [来源材料](docs/sources/README.md) | 原任务书、历史分析和课程要求快照 |
 
 ## 运行与协作状态
 
-目前没有安装、启动或测试命令。建立骨架后由实现者补充可复现命令与实际结果，不能将文档中的设计当作已运行系统。
+组员请优先阅读 [演示与验收指南](docs/ACCEPTANCE.md)。三个演示账号 `student`、`technician`、`manager` 共用公开测试密码 `CampusDemo2026!`。启动与自动检查细节见 [RUNNING](docs/RUNNING.md)，实现证据见 [IMPLEMENTATION](docs/IMPLEMENTATION.md)。本机入口为 [校园资源平台](http://127.0.0.1:8080)，开发邮件捕获为 [Mailpit](http://127.0.0.1:8025)。数据库和服务密钥仍在首次初始化时随机生成，不进入版本管理。
 
 计划由六人组成三个业务模块组，具体人员和前后端分工尚未确定。GitHub 用于仓库共享；早期课程材料另有 CodeArts 要求，两者如何配合仍需核对教师安排。

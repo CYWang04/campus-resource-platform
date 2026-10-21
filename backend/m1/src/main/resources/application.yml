@@ -1,0 +1,29 @@
+server:
+  port: ${PORT:8081}
+spring:
+  application:
+    name: m1
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/campus_m1?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true}
+    username: ${DB_USER:m1}
+    password: ${DB_PASSWORD}
+  flyway:
+    enabled: true
+  jackson:
+    time-zone: UTC
+  sql:
+    init:
+      mode: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+campus:
+  identity-url: ${IDENTITY_URL:http://localhost:8082}
+  resource-url: ${RESOURCE_URL:http://localhost:8081}
+  service-key: ${SERVICE_KEY}
+  demo-password: ${DEMO_PASSWORD}

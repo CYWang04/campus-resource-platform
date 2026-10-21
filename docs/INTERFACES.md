@@ -1,6 +1,6 @@
 # 接口与跨模块规则草案
 
-更新日期：2026-10-20。本文是前期设计提案，不是已实现 API，也不是已冻结的机器可读契约。F01/F04 需评审并补成 OpenAPI；最终字段必填性、状态枚举、错误码和端点动作需在实现前固定。
+更新日期：2026-10-21。本文是完整目标设计提案，尚未冻结。已实现的前期子集见 [OpenAPI](../contracts/foundation.openapi.json) 和 [实现选择](DECISIONS.md)；未列入子集的端点不能视为已实现。F01/F04 仍需团队评审。
 
 已确认业务政策见 [DECISIONS](DECISIONS.md) U06～U08；下列具体接口方案仍属 P05/P11。课程原要求见 [REQUIREMENTS](REQUIREMENTS.md)。
 

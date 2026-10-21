@@ -1,6 +1,6 @@
 # 总体架构与公共层设计草案
 
-更新日期：2026-10-20。本文整理前期讨论的目标架构，未创建代码。用户确认范围见 [DECISIONS](DECISIONS.md)；具体实现方案标记为待评审。
+更新日期：2026-10-21。本文保留完整目标架构；已实现前期子集及差异见 IMPLEMENTATION、DECISIONS。用户确认范围见 [DECISIONS](DECISIONS.md)；具体实现方案标记为待评审。
 
 ## 目标与运行结构
 
@@ -32,7 +32,7 @@ flowchart TB
 | 前端工程 | Node.js 24、npm、ESLint、Prettier | 固定运行时和依赖锁，TS 严格检查，Composition API/script setup |
 | 后端 | Java 21、Spring Boot 3.5 系列、Maven Wrapper | Java/Spring Boot 方向已确认；统一父工程管理依赖 |
 | 数据与权限 | Spring Data JPA、Spring Security、MySQL 8.4、InnoDB、Flyway | 禁用自动修改表结构，复杂查询和锁操作可使用 SQL |
-| 接口 | OpenAPI 3.0.3、JSON/HTTP | 接口契约先行；目前只有 Markdown 草案，还没有 OpenAPI 文件 |
+| 接口 | OpenAPI 3.0.3、JSON/HTTP | 已创建前期 OpenAPI 子集；完整契约及团队冻结待推进 |
 | 测试 | JUnit、Spring Boot Test、Testcontainers、Vitest、Playwright | MySQL 验证持久化及并发，关键流程连接真实服务 |
 | 交付 | Docker Compose、Nginx、课程要求的 CodeArts | GitHub 分享与 CodeArts 配合待核实 |
 | 附加项 | TypeScript DSH 插件 | 不在业务后端再建一套 Agent 业务逻辑 |
@@ -84,7 +84,7 @@ P04 提案使用随机 Bearer 会话令牌，M2 保存摘要、支持注销和�
 
 ## 工程骨架布局建议
 
-以下是待创建的逻辑布局，目前仓库只有文档和来源资料：
+以下布局已创建 web/backend/contracts/infra；agent-plugin 为后续计划目录：
 
 ```text
 web/                 统一前端，按 M1/M2/M3 分业务域

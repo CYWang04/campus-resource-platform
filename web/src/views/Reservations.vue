@@ -15,13 +15,13 @@ interface Seat {
 }
 interface Reservation {
   id: string;
-  seat_id: string;
-  room_id: string;
-  seat_code: string;
-  room_name: string;
+  seatId: string;
+  roomId: string;
+  seatCode: string;
+  roomName: string;
   building: string;
-  start_at: string;
-  end_at: string;
+  startAt: string;
+  endAt: string;
   status: "CONFIRMED" | "CHECKED_IN" | "CANCELLED" | "NO_SHOW" | "CANCELLED_MAINTENANCE";
   purpose: string;
 }
@@ -80,6 +80,9 @@ function localTime(value: string) {
     hour12: false,
   }).format(new Date(value));
 }
+function canCancel(item: Reservation) {
+  return item.status === "CONFIRMED" && new Date(item.startAt).getTime() > Date.now();
+}
 function disableDate(value: Date) {
   const now = new Date();
   const last = new Date(now.getTime() + 7 * 86400000);
@@ -104,8 +107,8 @@ async function load() {
 }
 
 async function showCode(roomId:string){const value=await read<{code:string}>(`/rooms/${roomId}/check-in-code`);codes.value[roomId]=value.code}
-async function checkIn(item:Reservation){const code=codes.value[item.room_id]??prompt("请输入教室屏幕上的6位签到码")??"";if(!code)return;await command(`/reservations/${item.id}/check-in`,{code},crypto.randomUUID());await load()}
-async function repeat(item:Reservation){form.value.roomId=item.room_id;form.value.seatId=item.seat_id;form.value.startAt=nextWholeHour();form.value.durationHours=Math.max(1,Math.min(4,(new Date(item.end_at).getTime()-new Date(item.start_at).getTime())/3600000));form.value.purpose=item.purpose;await loadSeats();form.value.seatId=item.seat_id}
+async function checkIn(item:Reservation){const code=codes.value[item.roomId]??prompt("请输入教室屏幕上的6位签到码")??"";if(!code)return;await command(`/reservations/${item.id}/check-in`,{code},crypto.randomUUID());await load()}
+async function repeat(item:Reservation){form.value.roomId=item.roomId;form.value.seatId=item.seatId;form.value.startAt=nextWholeHour();form.value.durationHours=Math.max(1,Math.min(4,(new Date(item.endAt).getTime()-new Date(item.startAt).getTime())/3600000));form.value.purpose=item.purpose;await loadSeats();form.value.seatId=item.seatId}
 
 async function loadSeats() {
   form.value.seatId = "";
@@ -237,10 +240,10 @@ onMounted(load);
       <h2>我的预约</h2>
       <el-table :data="reservations" v-loading="busy">
         <el-table-column label="地点" min-width="170">
-          <template #default="{ row }">{{ row.building }} · {{ row.room_name }} · {{ row.seat_code }}</template>
+          <template #default="{ row }">{{ row.building }} · {{ row.roomName }} · {{ row.seatCode }}</template>
         </el-table-column>
         <el-table-column label="时间" min-width="210">
-          <template #default="{ row }">{{ localTime(row.start_at) }}—{{ localTime(row.end_at) }}</template>
+          <template #default="{ row }">{{ localTime(row.startAt) }}—{{ localTime(row.endAt) }}</template>
         </el-table-column>
         <el-table-column prop="purpose" label="用途" />
         <el-table-column label="状态" width="100">
@@ -248,18 +251,22 @@ onMounted(load);
             <el-tag :type="row.status === 'CHECKED_IN' ? 'success' : row.status === 'NO_SHOW' ? 'danger' : 'info'">{{ labels[row.status] }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" min-width="330">
           <template #default="{ row }">
-            <el-button
-              v-if="row.status === 'CONFIRMED' && new Date(row.start_at) > new Date()"
-              text
-              :disabled="busy"
-              @click="cancel(row)"
-            >取消</el-button>
-            <el-button v-if="row.status==='CONFIRMED'" text @click="showCode(row.room_id)">查看签到码</el-button>
-            <el-button v-if="row.status==='CONFIRMED'" text @click="checkIn(row)">签到</el-button>
-            <el-button text @click="repeat(row)">再次预约</el-button>
-            <small v-if="codes[row.room_id]">今日码：{{codes[row.room_id]}}</small>
+            <div class="reservation-actions">
+              <el-button
+                v-if="canCancel(row)"
+                type="danger"
+                plain
+                size="small"
+                :disabled="busy"
+                @click="cancel(row)"
+              >取消预约</el-button>
+              <el-button v-if="row.status==='CONFIRMED'" size="small" @click="showCode(row.roomId)">查看签到码</el-button>
+              <el-button v-if="row.status==='CONFIRMED'" size="small" @click="checkIn(row)">签到</el-button>
+              <el-button size="small" @click="repeat(row)">再次预约</el-button>
+              <small v-if="codes[row.roomId]">今日码：{{codes[row.roomId]}}</small>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -268,3 +275,16 @@ onMounted(load);
     <article class="panel"><h2>违约记录</h2><el-table :data="violations"><el-table-column prop="reason" label="原因"/><el-table-column prop="createdAt" label="记录时间"/></el-table><el-empty v-if="!violations.length" description="暂无违约记录"/></article>
   </section>
 </template>
+
+<style scoped>
+.reservation-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reservation-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+</style>

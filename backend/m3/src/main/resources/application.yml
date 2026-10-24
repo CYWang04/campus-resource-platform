@@ -1,0 +1,36 @@
+server:
+  port: ${PORT:8083}
+spring:
+  application:
+    name: m3
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/campus_m3?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true}
+    username: ${DB_USER:m3}
+    password: ${DB_PASSWORD}
+  flyway:
+    enabled: true
+  jackson:
+    time-zone: UTC
+  sql:
+    init:
+      mode: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+campus:
+  identity-url: ${IDENTITY_URL:http://localhost:8082}
+  resource-url: ${RESOURCE_URL:http://localhost:8081}
+  service-key: ${SERVICE_KEY}
+  demo-password: ${DEMO_PASSWORD}
+spring.mail:
+  host: ${SMTP_HOST:localhost}
+  port: ${SMTP_PORT:1025}
+  properties:
+    mail.smtp.connectiontimeout: 3000
+    mail.smtp.timeout: 3000
+    mail.smtp.writetimeout: 3000

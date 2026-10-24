@@ -1,0 +1,24 @@
+{
+  "name": "campus-resource-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "3.5.13",
+    "vue-router": "4.5.1",
+    "pinia": "3.0.2",
+    "axios": "1.9.0",
+    "element-plus": "2.9.11"
+  },
+  "devDependencies": {
+    "vite": "6.3.5",
+    "typescript": "5.8.3",
+    "vue-tsc": "2.2.10",
+    "@vitejs/plugin-vue": "5.2.4"
+  }
+}

@@ -1,2 +1,49 @@
-# campus-resource-platform
-Campus resource service platform for seat reservations, classroom approvals and maintenance requests.
+# Campus Resource Platform · 校园资源服务平台
+
+软件过程管理与工程伦理课程 PJ：自习座位预约、整教室申请与审批、物业报修，以及后续自然语言业务 Agent。
+
+> 2026-10-21：已实现 M1 资源管理、条件查询、预约、动态码签到、提醒、违约、历史复用与统计，M2 整教室两级审批，以及 M3 报修派单、维修、验收和评价。前后端构建及最新一次本地 193 项真实链路检查通过；真实 SMTP 与 Agent 暂不纳入当前开发范围。
+
+## 新成员 / Agent 从这里开始
+
+1. 阅读 [AGENTS.md](AGENTS.md)，了解工作边界和协作要求。
+2. 阅读 [交接与当前状态](docs/HANDOFF.md)，确认已完成什么、尚缺什么。
+3. 阅读 [决策状态](docs/DECISIONS.md)，区分用户确认、设计建议和全组评审。
+4. 阅读 [分工前公共基础标准](docs/FOUNDATION.md) 与 [任务清单](docs/TASKS.md)，确定当前要推进的任务。
+5. 按任务阅读 [总体架构](docs/ARCHITECTURE.md)、[接口设计草案](docs/INTERFACES.md) 和 [课程要求基线](docs/REQUIREMENTS.md)。
+
+其他成员仅克隆本仓库，即可获得这些资料和任务书，不依赖发起人的电脑路径或其他项目。
+
+## 项目方向
+
+| 模块 | 业务职责 | 拟承载的公共能力 |
+| --- | --- | --- |
+| M1 | 座位查询、预约、签到、提醒、违约、历史与统计 | 教室/座位主数据、资源可用性与按来源占用 |
+| M2 | 整教室申请、多级审批、超时与撤销 | 自建身份、院系、角色权限 |
+| M3 | 报修、派单、维修、超时升级、验收与评价 | 通知中心、邮件、审计汇总 |
+
+采用一个 Vue 前端、三个 Java/Spring Boot 服务、一个 MySQL 实例和三个独立数据库。公共层按能力归属，不额外建立 D 服务。技术方向已由项目发起人确认；具体公共层归属和实现规则仍需全组评审，详见决策记录。
+
+当前已实现三个业务模块的核心闭环及真实跨模块资源同步，待团队评审与共同验收后继续补齐扩展业务。完整 Agent 放在基础系统验收后。
+
+## 文档导航
+
+| 文档 | 用途 |
+| --- | --- |
+| [HANDOFF](docs/HANDOFF.md) | 当前进度、下一步、外部条件与接手说明 |
+| [ACCEPTANCE](docs/ACCEPTANCE.md) | 组员启动、公开测试账号、五分钟演示、验收清单与记录模板 |
+| [REQUIREMENTS](docs/REQUIREMENTS.md) | 任务书要求、来源页码、最终验收 |
+| [DECISIONS](docs/DECISIONS.md) | 已确认选择、拟议默认值、待评审项 |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | 技术栈、模块边界、公共层及数据归属 |
+| [INTERFACES](docs/INTERFACES.md) | 接口规范、资源状态和跨模块可靠性设计草案 |
+| [FOUNDATION](docs/FOUNDATION.md) | 分工前范围及可以开始并行开发的门槛 |
+| [TASKS](docs/TASKS.md) | 带依赖与验收条件的后续工作清单 |
+| [ESTIMATES](docs/ESTIMATES.md) | 代码量、工作量及估算口径 |
+| [DEVELOPMENT](docs/DEVELOPMENT.md) | VS Code、JDK、Node、Docker 和扩展准备 |
+| [来源材料](docs/sources/README.md) | 原任务书、历史分析和课程要求快照 |
+
+## 运行与协作状态
+
+组员请优先阅读 [演示与验收指南](docs/ACCEPTANCE.md)。三个演示账号 `student`、`technician`、`manager` 共用公开测试密码 `CampusDemo2026!`。启动与自动检查细节见 [RUNNING](docs/RUNNING.md)，实现证据见 [IMPLEMENTATION](docs/IMPLEMENTATION.md)。本机入口为 [校园资源平台](http://127.0.0.1:8080)，开发邮件捕获为 [Mailpit](http://127.0.0.1:8025)。数据库和服务密钥仍在首次初始化时随机生成，不进入版本管理。
+
+计划由六人组成三个业务模块组，具体人员和前后端分工尚未确定。GitHub 用于仓库共享；早期课程材料另有 CodeArts 要求，两者如何配合仍需核对教师安排。

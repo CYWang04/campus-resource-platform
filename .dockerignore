@@ -1,0 +1,7 @@
+.git
+.work
+.env
+**/node_modules
+**/target
+**/dist
+docs/sources

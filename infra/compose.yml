@@ -1,0 +1,83 @@
+name: campus-resource
+services:
+  mysql:
+    image: mysql:8.4.11
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      M1_DB_PASSWORD: ${M1_DB_PASSWORD:?set M1_DB_PASSWORD}
+      M2_DB_PASSWORD: ${M2_DB_PASSWORD:?set M2_DB_PASSWORD}
+      M3_DB_PASSWORD: ${M3_DB_PASSWORD:?set M3_DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SELECT 1"']
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    ports: ["127.0.0.1:8025:8025"]
+  m2:
+    build:
+      context: ..
+      dockerfile: infra/backend.Dockerfile
+      args: {MODULE: m2}
+    environment: &backend-env
+      DB_URL: jdbc:mysql://mysql:3306/campus_m2?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+      DB_USER: m2
+      DB_PASSWORD: ${M2_DB_PASSWORD}
+      SERVICE_KEY: ${SERVICE_KEY:?set SERVICE_KEY}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?set DEMO_PASSWORD}
+      IDENTITY_URL: http://m2:8080
+      RESOURCE_URL: http://m1:8080
+      NOTIFICATION_URL: http://m3:8080
+      PORT: 8080
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+    depends_on:
+      mysql: {condition: service_healthy}
+    healthcheck: &app-health
+      test: [CMD, curl, -fsS, http://localhost:8080/actuator/health]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+  m1:
+    build:
+      context: ..
+      dockerfile: infra/backend.Dockerfile
+      args: {MODULE: m1}
+    environment:
+      <<: *backend-env
+      DB_URL: jdbc:mysql://mysql:3306/campus_m1?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+      DB_USER: m1
+      DB_PASSWORD: ${M1_DB_PASSWORD}
+    depends_on:
+      m2: {condition: service_healthy}
+    healthcheck: *app-health
+  m3:
+    build:
+      context: ..
+      dockerfile: infra/backend.Dockerfile
+      args: {MODULE: m3}
+    environment:
+      <<: *backend-env
+      DB_URL: jdbc:mysql://mysql:3306/campus_m3?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+      DB_USER: m3
+      DB_PASSWORD: ${M3_DB_PASSWORD}
+    depends_on:
+      m1: {condition: service_healthy}
+      mailpit: {condition: service_started}
+    healthcheck: *app-health
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    ports: ["127.0.0.1:8080:80"]
+    depends_on:
+      m1: {condition: service_healthy}
+      m2: {condition: service_healthy}
+      m3: {condition: service_healthy}
+volumes:
+  mysql-data:

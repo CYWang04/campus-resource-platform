@@ -170,4 +170,86 @@ class OrdersDatabaseTest {
       assertEquals(audits, count("audit_events"));
     } finally { db.execute("ALTER TABLE audit_events DROP CONSTRAINT reject_start"); }
   }
+  @Test void completionReplayDoesNotRewriteNoteTimestampOrAudit() {
+    String id = repairing(), key = key(); var note = new Orders.Note("Fixed light");
+    orders.complete(TECHNICIAN, key, id, note);
+    Timestamp sentinel = Timestamp.from(Instant.parse("2026-01-01T00:00:00Z"));
+    db.update("UPDATE work_orders SET completed_at=? WHERE id=?", sentinel, id);
+    int audits = count("audit_events"), commands = count("commands");
+    orders.complete(TECHNICIAN, key, id, note);
+    assertEquals(sentinel, row(id).get("completed_at"));
+    assertEquals("Fixed light", row(id).get("completion_note"));
+    assertEquals(audits, count("audit_events")); assertEquals(commands, count("commands"));
+  }
+
+  @Test void changedCompletionNoteWithSameKeyIsRejectedWithoutMutation() {
+    String id = repairing(), key = key();
+    orders.complete(TECHNICIAN, key, id, new Orders.Note("Original"));
+    Object completed = row(id).get("completed_at"); int audits = count("audit_events");
+    var error = assertThrows(Api.Failure.class,
+        () -> orders.complete(TECHNICIAN, key, id, new Orders.Note("Changed")));
+    assertEquals(409, error.status); assertEquals("IDEMPOTENCY_CONFLICT", error.code);
+    assertEquals("Original", row(id).get("completion_note"));
+    assertEquals(completed, row(id).get("completed_at")); assertEquals(audits, count("audit_events"));
+  }
+
+  @Test void oldCompletionReplayCannotOverwriteLaterRepairCycle() {
+    String id = repairing(), oldKey = key();
+    orders.complete(TECHNICIAN, oldKey, id, new Orders.Note("First repair"));
+    orders.rejectAcceptance(MANAGER, key(), id, new Orders.Note("Retry"));
+    orders.complete(TECHNICIAN, key(), id, new Orders.Note("Second repair"));
+    Object completed = row(id).get("completed_at"); int audits = count("audit_events");
+    assertEquals("AWAITING_ACCEPTANCE",
+        orders.complete(TECHNICIAN, oldKey, id, new Orders.Note("First repair")).get("state"));
+    assertEquals("Second repair", row(id).get("completion_note"));
+    assertEquals(completed, row(id).get("completed_at")); assertEquals(audits, count("audit_events"));
+  }
+
+  @Test void legacyCompletionEndpointRemainsIdempotent() {
+    String id = repairing(), key = key();
+    orders.action(TECHNICIAN, key, id, "complete");
+    int audits = count("audit_events");
+    assertEquals("AWAITING_ACCEPTANCE", orders.action(TECHNICIAN, key, id, "complete").get("state"));
+    assertEquals(audits, count("audit_events"));
+  }
+
+  @Test void completionAuditFailureRollsBackNoteAndTimestamp() {
+    String id = repairing(); int commands = count("commands");
+    db.execute("ALTER TABLE audit_events ADD CONSTRAINT reject_complete CHECK (action <> 'COMPLETE')");
+    try {
+      assertThrows(org.springframework.dao.DataAccessException.class,
+          () -> orders.complete(TECHNICIAN, key(), id, new Orders.Note("Fixed")));
+      assertEquals("REPAIRING", row(id).get("state"));
+      assertNull(row(id).get("completion_note")); assertNull(row(id).get("completed_at"));
+      assertEquals(commands, count("commands"));
+    } finally { db.execute("ALTER TABLE audit_events DROP CONSTRAINT reject_complete"); }
+  }
+
+  @Test void concurrentIdenticalCompletionCreatesOneAuditAndCommand() throws Exception {
+    String id = repairing(), key = key(); int audits = count("audit_events"), commands = count("commands");
+    var start = new java.util.concurrent.CountDownLatch(1);
+    try (var pool = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<Map<String,Object>> request = () -> {
+        start.await(); return orders.complete(TECHNICIAN, key, id, new Orders.Note("Fixed"));
+      };
+      var first = pool.submit(request); var second = pool.submit(request); start.countDown();
+      assertEquals("AWAITING_ACCEPTANCE", first.get(10, java.util.concurrent.TimeUnit.SECONDS).get("state"));
+      assertEquals("AWAITING_ACCEPTANCE", second.get(10, java.util.concurrent.TimeUnit.SECONDS).get("state"));
+    }
+    assertEquals(audits + 1, count("audit_events")); assertEquals(commands + 1, count("commands"));
+  }
+
+  @Test void preUpgradeCompletionKeyCannotRewriteExistingCompletion() {
+    String id = repairing(), key = key();
+    // The previous implementation stored the legacy action fingerprint even with a note.
+    orders.action(TECHNICIAN, key, id, "complete");
+    db.update("UPDATE work_orders SET completion_note='Original',completed_at=CURRENT_TIMESTAMP WHERE id=?", id);
+    Object completed = row(id).get("completed_at");
+    var error = assertThrows(Api.Failure.class,
+        () -> orders.complete(TECHNICIAN, key, id, new Orders.Note("Changed")));
+    assertEquals("IDEMPOTENCY_CONFLICT", error.code);
+    assertEquals("Original", row(id).get("completion_note"));
+    assertEquals(completed, row(id).get("completed_at"));
+  }
+
 }

@@ -37,8 +37,8 @@ class AssignmentHttpTest {
     var fixture = new OrdersDatabaseTest(); fixture.db = db; fixture.orders = orders; fixture.reset();
     id = fixture.report(); actor = OrdersDatabaseTest.MANAGER;
     directoryStatus = 200;
-    directoryBody = json.writeValueAsString(Map.of("data", new Object[]{Map.of(
-        "id", OrdersDatabaseTest.TECHNICIAN.id(), "displayName", "Verified technician", "email", "verified@campus.test")}));
+    directoryBody = json.writeValueAsString(Map.of("requestId", "directory-test", "data", new Object[]{Map.of(
+        "id", OrdersDatabaseTest.TECHNICIAN.id(), "username", "technician", "displayName", "Verified technician", "email", "verified@campus.test")}));
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext("/internal/v1/auth/introspect", exchange -> {
       exchange.getRequestBody().readAllBytes();
@@ -116,6 +116,26 @@ class AssignmentHttpTest {
     assign("assign-malformed", body(OrdersDatabaseTest.TECHNICIAN.id())).andExpect(status().isServiceUnavailable());
     assertEquals("REPORTED", row().get("state"));
     assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM notifications", Integer.class));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {401, 403})
+  void directoryPermissionFailureIsNotReportedAsSuccessfulAssignment(int responseStatus) throws Exception {
+    directoryStatus = responseStatus; directoryBody = "{}";
+    assign("assign-directory-denied", body(OrdersDatabaseTest.TECHNICIAN.id()))
+        .andExpect(status().is(responseStatus));
+    assertEquals("REPORTED", row().get("state"));
+    assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM notifications", Integer.class));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"", "invalid-address"})
+  void incompleteDirectoryIdentityFailsClosed(String email) throws Exception {
+    directoryBody = json.writeValueAsString(Map.of("data", new Object[]{Map.of(
+        "id", OrdersDatabaseTest.TECHNICIAN.id(), "displayName", "Technician", "email", email)}));
+    assign("assign-incomplete", body(OrdersDatabaseTest.TECHNICIAN.id()))
+        .andExpect(status().isServiceUnavailable());
+    assertEquals("REPORTED", row().get("state"));
   }
 
 }

@@ -80,7 +80,7 @@ try{
     await eventually(async()=>Number(sql('m1',`SELECT attempts FROM reservation_notification_tasks WHERE id='${reminderTask}'`)),n=>n>=1,'Reminder delivery was not retried');
     await cancel(reminderBooking);
     await eventually(async()=>sql('m1',`SELECT status FROM reservation_notification_tasks WHERE id='${reminderTask}'`),status=>status==='SKIPPED','Cancelled reminder was not skipped');
-  }finally{compose('start','--wait','m3');m3Stopped=false;}
+  }finally{compose('up','-d','--wait','--no-deps','m3');m3Stopped=false;}
   assert.ok(!(await api('/notifications',{token:student})).some(n=>n.message===reminderMessage));checks++;
   const closed=await api(`/rooms/${publicResource.room.id}/seats?startAt=${encodeURIComponent(at(-2))}&endAt=${encodeURIComponent(at(-1))}`,{token:student});
   assert.equal(closed.length,2);assert.ok(closed.every(s=>!s.available&&s.unavailableReason==='OUTSIDE_OPEN_HOURS'));
@@ -126,7 +126,7 @@ try{
     await eventually(async()=>Number(sql('m1',`SELECT attempts FROM resource_cancellation_tasks WHERE application_id='${application.id}'`)),n=>n>=1,'Cancellation was not persisted/retried');
     effect(sourceA,{...activeA,operationId:randomUUID(),sourceVersion:2,desiredState:'RELEASED'});
     assert.equal(sql('m1',`SELECT COUNT(*) FROM resource_effects WHERE room_id='${joint.room.id}' AND state='ACTIVE'`),'1');
-  }finally{compose('start','--wait','m2');m2Stopped=false;}
+  }finally{compose('up','-d','--wait','--no-deps','m2');m2Stopped=false;}
   await eventually(()=>api(`/room-applications/${application.id}`,{token:student}),v=>v.state==='CANCELLED_MAINTENANCE','Maintenance cancellation did not converge');
   await eventually(()=>api('/admin/resource-sync-tasks'),rows=>rows.some(t=>t.applicationId===application.id&&t.status==='SENT'),'Cancellation callback not acknowledged');
   const taskRow=sql('m1',`SELECT id,source_version,maintenance_source_id FROM resource_cancellation_tasks WHERE application_id='${application.id}'`).split('\t');
@@ -151,8 +151,8 @@ try{
 
 }catch(error){failure=error;}
 finally{
-  if(m2Stopped)compose('start','--wait','m2');
-  if(m3Stopped)compose('start','--wait','m3');
+  if(m2Stopped)compose('up','-d','--wait','--no-deps','m2');
+  if(m3Stopped)compose('up','-d','--wait','--no-deps','m3');
   if(originalPolicy&&manager){try{const current=await api('/reservation-policy');await api('/admin/reservation-policy',{method:'PUT',body:{...originalPolicy,version:current.version}});}catch(error){failure??=error;}}
   for(const room of rooms){
     try{

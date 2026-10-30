@@ -10,7 +10,7 @@ const base = 'http://127.0.0.1:8080/api/v1';
 const composeArgs = ['compose', '--env-file', '.env', '-f', 'infra/compose.yml'];
 function compose(...args) {
   const result = spawnSync('docker', [...composeArgs, ...args], { encoding: 'utf8', timeout: 180000 });
-  if (result.status !== 0) throw new Error('Compose action failed: ' + args[0]);
+  if (result.status !== 0) throw new Error(`Compose action failed: ${args.join(' ')}\n${result.stderr}`);
   return result.stdout;
 }
 async function api(path, token, body, status = 200) {
@@ -42,14 +42,14 @@ try {
   const actual = await api('/work-orders/' + order.id, student);
   assert.equal(actual.state, 'START_PENDING');
   assert.ok(actual.operations[0].attempts >= 1);
-} finally { compose('start', '--wait', 'm1'); }
+} finally { compose('up', '-d', '--wait', '--no-deps', 'm1'); }
 await wait(order.id, student, 'REPAIRING');
 await api('/work-orders/' + order.id + '/complete', tech, {});
 await api('/work-orders/' + order.id + '/accept', manager, {});
 await wait(order.id, student, 'CLOSED');
 compose('stop', 'm2');
 try { await api('/rooms', student, undefined, 503); }
-finally { compose('start', '--wait', 'm2'); }
+finally { compose('up', '-d', '--wait', '--no-deps', 'm2'); }
 // Docker can briefly retain the previous health status during a restart.
 // Wait for a real authenticated request, preserving the original session.
 let restored = false;

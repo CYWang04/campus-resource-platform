@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { testSchedule } from './test-slots.mjs';
 
 // Local-only demo credentials are read without writing them to output.
 const env = Object.fromEntries(fs.readFileSync(new URL('../.env', import.meta.url), 'utf8').trim().split(/\r?\n/).map(line => {
@@ -10,13 +9,14 @@ const env = Object.fromEntries(fs.readFileSync(new URL('../.env', import.meta.ur
 }));
 const base = process.env.BASE_URL ?? 'http://127.0.0.1:8080';
 let checks = 0;
-async function request(path, token, method = 'GET', body, key, expected = 200) {
+async function request(path, token, method = 'GET', body, key, expected = 200, expectedCode) {
   const response = await fetch(base + '/api/v1' + path, {
     method, headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}) },
     body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15000),
   });
   const result = await response.json();
   assert.equal(response.status, expected, `${method} ${path}: ${result.code ?? response.status}`);
+  if (expectedCode) assert.equal(result.code, expectedCode, `${method} ${path}: unexpected business error`);
   assert.ok(result.requestId); checks++;
   return result.data;
 }
@@ -55,18 +55,30 @@ for (const service of ['m1', 'm2', 'm3']) {
 }
 const room = (await request('/rooms', student)).items.find(item => item.id === '10000000-0000-0000-0000-000000000001');
 assert.ok(room); const roomId = room.id;
+assert.equal(room.openTime, '07:00:00');
+assert.equal(room.closeTime, '23:00:00');
 const roomSeats = await request('/rooms/' + roomId + '/seats', student);
 assert.ok(roomSeats.length > 1);
 await request('/admin/audit-events', student, 'GET', undefined, undefined, 403);
 
 const hour = 60 * 60 * 1000;
-const { nextHour, at } = testSchedule();
+function shanghaiTomorrowAt(hourOfDay) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]),
+  );
+  const shanghaiToday = new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00+08:00`);
+  return new Date(shanghaiToday.getTime() + 24 * hour + hourOfDay * hour);
+}
+const nextHour = shanghaiTomorrowAt(8);
+const at = (offset) => new Date(nextHour.getTime() + offset * hour).toISOString();
 const reservation = { seatId: roomSeats[0].id, startAt: at(0), endAt: at(1), purpose: '自动验收预约' };
 await request('/reservations', technician, 'POST', reservation, randomUUID(), 403);
-await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(nextHour.getTime() + 30 * 60 * 1000).toISOString(), endAt: new Date(nextHour.getTime() + 90 * 60 * 1000).toISOString() }, randomUUID(), 400);
-await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(Math.floor(Date.now() / hour) * hour - hour).toISOString(), endAt: new Date(Math.floor(Date.now() / hour) * hour).toISOString() }, randomUUID(), 409);
-await request('/reservations', student, 'POST', { ...reservation, endAt: at(5) }, randomUUID(), 400);
-await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(Math.ceil(Date.now() / hour) * hour + 8 * 24 * hour).toISOString(), endAt: new Date(Math.ceil(Date.now() / hour) * hour + 8 * 24 * hour + hour).toISOString() }, randomUUID(), 409);
+await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(nextHour.getTime() + 30 * 60 * 1000).toISOString(), endAt: new Date(nextHour.getTime() + 90 * 60 * 1000).toISOString() }, randomUUID(), 400, 'WHOLE_HOUR_REQUIRED');
+await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(Math.floor(Date.now() / hour) * hour - hour).toISOString(), endAt: new Date(Math.floor(Date.now() / hour) * hour).toISOString() }, randomUUID(), 409, 'START_IN_PAST');
+await request('/reservations', student, 'POST', { ...reservation, endAt: at(5) }, randomUUID(), 400, 'INVALID_DURATION');
+await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(Math.ceil(Date.now() / hour) * hour + 8 * 24 * hour).toISOString(), endAt: new Date(Math.ceil(Date.now() / hour) * hour + 8 * 24 * hour + hour).toISOString() }, randomUUID(), 409, 'START_TOO_LATE');
 const reservationKey = randomUUID();
 const booked = await request('/reservations', student, 'POST', reservation, reservationKey);
 const replayedBooking = await request('/reservations', student, 'POST', reservation, reservationKey);
@@ -148,7 +160,7 @@ await request('/work-orders/' + first.id + '/start', technician, 'POST', {}, sta
 await request('/work-orders/' + first.id + '/start', technician, 'POST', {}, startKey);
 await request('/work-orders/' + second.id + '/start', technician, 'POST', {}, randomUUID());
 await waitState(first.id, student, 'REPAIRING'); await waitState(second.id, student, 'REPAIRING');
-await request('/reservations', student, 'POST', { ...reservation, startAt: at(12), endAt: at(13), purpose: '维修限制验证' }, randomUUID(), 409);
+await request('/reservations', student, 'POST', { ...reservation, startAt: at(12), endAt: at(13), purpose: '维修限制验证' }, randomUUID(), 409, 'ROOM_UNAVAILABLE');
 let availability = await request('/rooms/' + roomId + '/availability', student);
 for(let i=0;i<10&&availability.available;i++){await new Promise(resolve=>setTimeout(resolve,500));availability=await request('/rooms/' + roomId + '/availability', student);}
 assert.equal(availability.available, false); assert.equal(availability.effects.length, 2); checks += 2;

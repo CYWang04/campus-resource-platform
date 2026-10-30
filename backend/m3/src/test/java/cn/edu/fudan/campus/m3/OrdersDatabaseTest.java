@@ -56,6 +56,10 @@ class OrdersDatabaseTest {
       return new DataSourceTransactionManager(source);
     }
     @Bean Orders orders(JdbcTemplate db) { return new Orders(db); }
+    @Bean WorkOrderEscalations escalations(JdbcTemplate db) {
+      return new WorkOrderEscalations(db, java.time.Clock.fixed(
+          Instant.parse("2026-10-30T08:00:00Z"), java.time.ZoneOffset.UTC));
+    }
   }
 
   @BeforeEach void reset() {

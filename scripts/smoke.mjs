@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { testSchedule } from './test-slots.mjs';
 
 // Local-only demo credentials are read without writing them to output.
 const env = Object.fromEntries(fs.readFileSync(new URL('../.env', import.meta.url), 'utf8').trim().split(/\r?\n/).map(line => {
@@ -21,7 +22,7 @@ async function request(path, token, method = 'GET', body, key, expected = 200) {
 }
 async function login(username) { return (await request('/auth/login', null, 'POST', { username, password: env.DEMO_PASSWORD })).token; }
 function m1sql(statement) {
-  const result = spawnSync('docker', ['compose','--env-file','.env','-f','infra/compose.yml','exec','-T','-e',`MYSQL_PWD=${env.M1_DB_PASSWORD}`,'mysql','mysql','-um1','campus_m1','-N','-e',statement], { encoding:'utf8', timeout:30000 });
+  const result = spawnSync('docker', ['compose','--env-file','.env','-f','infra/compose.yml','exec','-T','mysql','sh','-c','MYSQL_PWD="$M1_DB_PASSWORD" exec mysql -um1 campus_m1 -N -e "$1"','mysql-smoke',statement], { encoding:'utf8', timeout:30000 });
   assert.equal(result.status,0,result.stderr); return result.stdout.trim();
 }
 async function waitState(id, token, expected) {
@@ -45,6 +46,9 @@ async function waitApplication(id, token, expected) {
 await request('/rooms', null, 'GET', undefined, undefined, 401);
 await request('/auth/login', null, 'POST', { username: 'student', password: 'wrong' }, undefined, 401);
 const student = await login('student'), technician = await login('technician'), manager = await login('manager');
+const savedPolicy=await request('/reservation-policy',manager);
+await request('/admin/reservation-policy',manager,'PUT',{...savedPolicy,maxDurationHours:4,maxAdvanceDays:7},randomUUID());
+try {
 for (const service of ['m1', 'm2', 'm3']) {
   const version = await request('/system/' + service + '/version', student);
   assert.equal(version.service, service); assert.equal(version.version, '0.1.0-SNAPSHOT'); checks += 2;
@@ -56,12 +60,7 @@ assert.ok(roomSeats.length > 1);
 await request('/admin/audit-events', student, 'GET', undefined, undefined, 403);
 
 const hour = 60 * 60 * 1000;
-let nextHour = new Date(Math.ceil(Date.now() / hour) * hour + 2 * hour);
-if (nextHour.getHours() < 7 || nextHour.getHours() > 18) {
-  if (nextHour.getHours() > 18) nextHour.setDate(nextHour.getDate() + 1);
-  nextHour.setHours(8, 0, 0, 0);
-}
-const at = (offset) => new Date(nextHour.getTime() + offset * hour).toISOString();
+const { nextHour, at } = testSchedule();
 const reservation = { seatId: roomSeats[0].id, startAt: at(0), endAt: at(1), purpose: '自动验收预约' };
 await request('/reservations', technician, 'POST', reservation, randomUUID(), 403);
 await request('/reservations', student, 'POST', { ...reservation, startAt: new Date(nextHour.getTime() + 30 * 60 * 1000).toISOString(), endAt: new Date(nextHour.getTime() + 90 * 60 * 1000).toISOString() }, randomUUID(), 400);
@@ -159,7 +158,9 @@ for (const [index, order] of [first, second].entries()) {
   await request('/work-orders/' + order.id + '/accept', manager, 'POST', {}, randomUUID());
   await waitState(order.id, student, 'CLOSED');
   availability = await request('/rooms/' + roomId + '/availability', student);
-  assert.equal(availability.available, index === 1); assert.equal(availability.effects.length, 1 - index); checks += 2;
+  assert.equal(availability.effects.length, 1 - index); checks++;
+  const freed = await request(`/rooms/${roomId}/seats?startAt=${encodeURIComponent(at(0))}&endAt=${encodeURIComponent(at(1))}`, student);
+  assert.equal(freed.every(s => s.available), index === 1); checks++;
 }
 await request('/work-orders/' + first.id + '/rating', manager, 'POST', { score: 5, comment: '越权' }, randomUUID(), 403);
 const rated = await request('/work-orders/' + first.id + '/rating', student, 'POST', { score: 5, comment: '维修及时' }, randomUUID());
@@ -168,11 +169,12 @@ const historyBase = { seatId: roomSeats[0].id, startAt: at(0), endAt: at(1), pur
 const history = await request('/reservations', student, 'POST', historyBase, randomUUID());
 await request('/reservations/' + history.id + '/cancel', student, 'POST', {}, randomUUID());
 const repeated = await request('/reservations/' + history.id + '/repeat', student, 'POST', { startAt: at(1), endAt: at(2) }, randomUUID());
-assert.equal(repeated.seat_id, history.seat_id); assert.equal(repeated.purpose, history.purpose); checks += 2;
+assert.equal(repeated.seatId, history.seatId); assert.equal(repeated.seatId, historyBase.seatId); assert.equal(repeated.purpose, history.purpose); checks += 2;
 await request('/reservations/' + repeated.id + '/cancel', student, 'POST', {}, randomUUID());
 const checkinReservation = await request('/reservations', student, 'POST', { ...historyBase, purpose:'签到验收' }, randomUUID());
 m1sql(`UPDATE reservations SET start_at=UTC_TIMESTAMP()-INTERVAL 5 MINUTE,end_at=UTC_TIMESTAMP()+INTERVAL 55 MINUTE WHERE id='${checkinReservation.id}'`);
-const dailyCode = await request('/rooms/' + roomId + '/check-in-code', student);
+await request('/rooms/' + roomId + '/check-in-code', student, 'GET', undefined, undefined, 403);
+const dailyCode = await request('/rooms/' + roomId + '/check-in-code', manager);
 await request('/reservations/' + checkinReservation.id + '/check-in', student, 'POST', { code:'000000' }, randomUUID(), 409);
 const checkedIn = await request('/reservations/' + checkinReservation.id + '/check-in', student, 'POST', { code:dailyCode.code }, randomUUID());
 assert.equal(checkedIn.status,'CHECKED_IN'); checks++;
@@ -198,4 +200,8 @@ await request('/auth/logout', student, 'POST');
 await request('/rooms', student, 'GET', undefined, undefined, 401);
 const internal = await fetch(base + '/internal/v1/auth/introspect', { method: 'POST' });
 assert.equal(internal.status, 404); checks++;
+} finally {
+  const current=await request('/reservation-policy',manager);
+  await request('/admin/reservation-policy',manager,'PUT',{...savedPolicy,version:current.version},randomUUID());
+}
 console.log(`PASS: ${checks} assertions/HTTP checks; M1 resource management, filtering, reservations, repeat booking, daily-code check-in, no-show violations and statistics; M2 approvals; M3 work orders; notifications, audit and gateway isolation.`);

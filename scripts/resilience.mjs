@@ -30,7 +30,7 @@ async function wait(id, token, state) {
   throw new Error('State did not converge: ' + state);
 }
 const student = await login('student'), tech = await login('technician'), manager = await login('manager');
-const room = (await api('/rooms', student)).items[0].id;
+const room = (await api('/rooms', student)).items.find(r => r.id === '10000000-0000-0000-0000-000000000001').id;
 const order = await api('/work-orders', student, { roomId: room, title: '依赖恢复验收', description: '模拟资源服务暂时停止' });
 const worker = (await api('/directory/maintenance-workers', manager))[0];
 await api('/work-orders/' + order.id + '/assign', manager, { repairerId: worker.id, repairerName: worker.displayName, repairerEmail: worker.email });
@@ -74,7 +74,7 @@ effect(active);
 effect({ ...active, operationId: randomUUID(), sourceVersion: 2, desiredState: 'RELEASED' });
 assert.equal(effect(active).currentSourceState, 'RELEASED');
 effect({ ...active, operationId: randomUUID() }, 409);
-assert.equal((await api('/rooms/' + room + '/availability', student)).available, true);
+assert.equal((await api('/rooms/' + room + '/availability', student)).effects.length, 0);
 
 const denied = spawnSync('docker', [...composeArgs, 'exec', '-T', 'mysql', 'sh', '-c', 'MYSQL_PWD="$M1_DB_PASSWORD" mysql -um1 -e "SELECT COUNT(*) FROM campus_m2.users"'], { encoding: 'utf8', timeout: 15000 });
 assert.notEqual(denied.status, 0); assert.match(denied.stderr, /denied/i);

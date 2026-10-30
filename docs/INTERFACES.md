@@ -1,6 +1,8 @@
 # 接口与跨模块规则草案
 
-更新日期：2026-10-21。本文是完整目标设计提案，尚未冻结。已实现的前期子集见 [OpenAPI](../contracts/foundation.openapi.json) 和 [实现选择](DECISIONS.md)；未列入子集的端点不能视为已实现。F01/F04 仍需团队评审。
+更新日期：2026-10-26。本文是完整目标设计提案，尚未冻结。已实现子集见 [OpenAPI](../contracts/foundation.openapi.json) 和 [实现选择](DECISIONS.md)；本轮增量见末节。未列入子集的端点不能视为已实现。F01/F04 仍需团队评审。
+
+2026-10-30：后端接口保留，前端已按用户要求恢复原版，新增能力尚待页面接入；新增/已有接口差异、字段示例及兼容项统一交给 [M1_FRONTEND_HANDOFF](M1_FRONTEND_HANDOFF.md)。
 
 已确认业务政策见 [DECISIONS](DECISIONS.md) U06～U08；下列具体接口方案仍属 P05/P11。课程原要求见 [REQUIREMENTS](REQUIREMENTS.md)。
 
@@ -105,3 +107,25 @@
 ## 后续契约任务必须补齐
 
 F04 至少固定：来源枚举、资源版本推进点、幂等键作用域及保存周期、操作结果查询的路由与权限、校验字段、错误码、状态机终态、服务调用凭证格式，以及正常/冲突/重试/乱序示例。详细契约须受影响组评审，当前草案不能替代评审。
+
+## 2026-10-26 已实现增量（OpenAPI 0.4.0，待评审）
+
+| 接口 | 权限与行为 |
+| --- | --- |
+| GET `/api/v1/reservation-policy` | `resources:read`；返回 maxDurationHours、maxAdvanceDays、version |
+| PUT `/api/v1/admin/reservation-policy` | `resources:manage`；携带当前 version，旧版本返回 POLICY_VERSION_CONFLICT；已有预约不追溯变更 |
+| GET `/api/v1/admin/rooms`、`/admin/rooms/{id}/seats` | `resources:manage`；含停用资源，供维护使用 |
+| GET `/api/v1/rooms/{id}/check-in-code` | `resources:manage`；学生返回 403；仅返回指定教室上海日期的每日码 |
+| GET `/api/v1/admin/resource-audit-events` | `audit:read`；最近 100 条 M1 资源/预约事件 |
+| GET `/api/v1/admin/resource-sync-tasks` | `resources:manage`；最近 100 条维修取消回调状态及安全错误摘要 |
+| POST `/internal/v1/room-applications/{id}/maintenance-cancellations` | 服务密钥；eventId、roomId、sourceVersion、maintenanceSourceId；同事件同内容去重，不同内容 409 |
+
+资源公开查询支持楼宇、插座和成对 startAt/endAt；有时段时按当前策略校验。未传时段查询当前状态。列表、座位详情和创建共用院系/启用/开放规则；实际创建在锁内再次核验。院系空值表示全校，资源管理员可查看全部院系。资源编辑的 ACTIVE_RESERVATIONS 冲突包含有效整室占用；移动座位返回 SEAT_ROOM_IMMUTABLE。
+
+内部资源操作结果同时返回历史 `sourceState` 与实际 `currentSourceState`。例如旧 ACTIVE 操作成功后被维修取消，再次重放仍返回历史 ACTIVE，但 currentSourceState=CANCELLED 并带 invalidatedBy。M2 必须以当前状态收敛，不能凭历史 APPLIED 恢复批准。CANCELLED 来源收到新的 ACTIVE 返回 SOURCE_TERMINAL，RELEASED 不抹除取消终态。来源范围不可改换教室。
+
+M1 的 resource_cancellation_tasks 和 M2 的 application_resource_events/application_notification_tasks 构成取消闭环。接收方先锁申请、后锁同步任务；HTTP 位于本地事务之外，连接/读取超时为 3/5 秒，失败持久化后递增重试间隔，最长 60 秒。并不保证三个服务同一时刻原子提交。
+
+预约列表新增 displayStatus；已结束的已签到记录展示 COMPLETED，原 status 仍为 CHECKED_IN。统计支持 from/to（含首尾的上海日期，按 startAt 归属）及 roomId；byStartHour 为上海小时，byRoom.reservationHours 排除取消和违约。利用率、审计汇总和完整筛选仍未实现。
+
+上文“内部身份按来源隔离”仍是目标，本地实现尚为共享服务密钥。完整错误/示例、服务身份升级及团队冻结继续属于 F04。

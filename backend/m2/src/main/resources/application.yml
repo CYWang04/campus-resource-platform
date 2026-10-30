@@ -1,6 +1,10 @@
 server:
   port: ${PORT:8082}
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 3
   application:
     name: m2
   datasource:
@@ -25,5 +29,6 @@ management:
 campus:
   identity-url: ${IDENTITY_URL:http://localhost:8082}
   resource-url: ${RESOURCE_URL:http://localhost:8081}
+  notification-url: ${NOTIFICATION_URL:http://localhost:8083}
   service-key: ${SERVICE_KEY}
   demo-password: ${DEMO_PASSWORD}

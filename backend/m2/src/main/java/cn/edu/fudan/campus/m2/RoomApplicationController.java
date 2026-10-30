@@ -15,6 +15,12 @@ public class RoomApplicationController {
       @org.springframework.beans.factory.annotation.Value("${campus.resource-url}") String url){
     this.applications=applications;this.identity=identity;this.resources=RestClient.builder().baseUrl(url).build();
   }
+  @PostMapping("/internal/v1/room-applications/{id}/maintenance-cancellations")
+  public Object maintenance(@RequestHeader(value="X-Service-Key",required=false)String key,
+      @PathVariable String id,@Valid @RequestBody RoomApplications.MaintenanceCancellation input){
+    identity.internal(key);
+    return Api.ok(applications.maintenanceCancellation(id,input));
+  }
   @GetMapping("/api/v1/room-applications") public Object list(@RequestHeader(value="Authorization",required=false)String auth){return Api.ok(applications.list(identity.require(auth,null)));}
   @GetMapping("/api/v1/room-applications/{id}") public Object get(@RequestHeader(value="Authorization",required=false)String auth,@PathVariable String id){return Api.ok(applications.get(id,identity.require(auth,null)));}
   @PostMapping("/api/v1/room-applications") public Object create(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@Valid @RequestBody RoomApplications.Create input){

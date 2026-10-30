@@ -9,21 +9,23 @@ import java.sql.Timestamp;
 import java.time.*;
 import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.*;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 public class Reservations {
-  private static final Duration MAX_DURATION = Duration.ofHours(4);
-  private static final Duration MAX_ADVANCE = Duration.ofDays(7);
   private final JdbcTemplate db;
   private final Identity identity;
   private final ObjectMapper json;
+  private final ReservationPolicy policy;
+  private final ResourceAudit audit;
 
-  public Reservations(JdbcTemplate db, Identity identity, ObjectMapper json) {
+  public Reservations(JdbcTemplate db, Identity identity, ObjectMapper json, ReservationPolicy policy, ResourceAudit audit) {
     this.db = db;
     this.identity = identity;
     this.json = json;
+    this.policy = policy;
+    this.audit = audit;
   }
 
   public record Create(
@@ -35,7 +37,7 @@ public class Reservations {
   public record CheckIn(@NotBlank @Pattern(regexp="\\d{6}") String code) {}
 
   @PostMapping("/api/v1/reservations")
-  @Transactional
+  @Transactional(isolation=Isolation.READ_COMMITTED)
   public Object create(
       @RequestHeader(value = "Authorization", required = false) String auth,
       @RequestHeader(value = "Idempotency-Key", required = false) String key,
@@ -44,23 +46,19 @@ public class Reservations {
     var actor = identity.require(auth, "reservations:create");
     String idempotencyKey = key(key);
     Ids.uuid(input.seatId());
-    validateWindow(input.startAt(), input.endAt(), true);
     String fingerprint = Ids.hash("CREATE" + json.writeValueAsString(input));
     var replay = replay(actor.id(), idempotencyKey, fingerprint);
     if (replay != null) return Api.ok(replay);
+    policy.validate(input.startAt(), input.endAt(), true);
 
-    var seats =
-        db.queryForList(
-            "SELECT s.id,s.code,s.room_id,r.name AS room_name,r.department_code,r.open_time,r.close_time,r.active AS room_active,s.active AS seat_active FROM seats s JOIN rooms r ON"
-                + " r.id=s.room_id WHERE s.id=? FOR UPDATE",
-            input.seatId());
-    if (seats.isEmpty()) throw Api.fail(404, "SEAT_NOT_FOUND", "座位不存在");
-    var seat = seats.getFirst();
-    if(!Boolean.TRUE.equals(seat.get("room_active"))||!Boolean.TRUE.equals(seat.get("seat_active")))throw Api.fail(409,"RESOURCE_INACTIVE","教室或座位已停用");
-    if(seat.get("department_code")!=null&&!Objects.equals(seat.get("department_code"),actor.departmentCode()))throw Api.fail(403,"DEPARTMENT_FORBIDDEN","该自习室仅向所属院系开放");
-    var zone=ZoneId.of("Asia/Shanghai");var localStart=LocalDateTime.ofInstant(input.startAt(),zone);var localEnd=LocalDateTime.ofInstant(input.endAt(),zone);
-    if(!localStart.toLocalDate().equals(localEnd.toLocalDate())||localStart.toLocalTime().isBefore(((java.sql.Time)seat.get("open_time")).toLocalTime())||localEnd.toLocalTime().isAfter(((java.sql.Time)seat.get("close_time")).toLocalTime()))throw Api.fail(409,"OUTSIDE_OPEN_HOURS","预约时段不在教室开放时间内");
-    String roomId = (String) seat.get("room_id");
+    var locations=db.queryForList("SELECT room_id FROM seats WHERE id=?",input.seatId());
+    if(locations.isEmpty())throw Api.fail(404,"SEAT_NOT_FOUND","座位不存在");
+    String roomId=(String)locations.getFirst().get("room_id");
+    var room=db.queryForMap("SELECT * FROM rooms WHERE id=? FOR UPDATE",roomId);
+    var seat=db.queryForMap("SELECT * FROM seats WHERE id=? FOR UPDATE",input.seatId());
+    if(!Boolean.TRUE.equals(seat.get("active")))throw Api.fail(409,"RESOURCE_INACTIVE","座位已停用");
+    RoomRules.access(room,actor);
+    RoomRules.requireOpen(room,input.startAt(),input.endAt());
     Integer effects =
         db.queryForObject(
             "SELECT COUNT(*) FROM resource_effects WHERE room_id=? AND state='ACTIVE' AND start_at<? AND (end_at IS NULL OR end_at>?)",
@@ -69,7 +67,7 @@ public class Reservations {
             Timestamp.from(input.endAt()),
             Timestamp.from(input.startAt()));
     if (effects != null && effects > 0)
-      throw Api.fail(409, "ROOM_UNAVAILABLE", "教室当前受维修限制，不能预约");
+      throw Api.fail(409, "ROOM_UNAVAILABLE", "教室在该时段受整室占用或维修限制，不能预约");
     Integer conflicts =
         db.queryForObject(
             "SELECT COUNT(*) FROM reservations WHERE seat_id=? AND status IN ('CONFIRMED','CHECKED_IN') AND"
@@ -96,11 +94,12 @@ public class Reservations {
         input.purpose().trim());
     var result = view(id, actor.id(), true);
     save(actor.id(), idempotencyKey, fingerprint, result);
+    audit.record(actor.id(),"RESERVATION_CREATED","M1_RESERVATION",id,"创建个人预约");
     return Api.ok(result);
   }
 
   @PostMapping("/api/v1/reservations/{id}/repeat")
-  @Transactional
+  @Transactional(isolation=Isolation.READ_COMMITTED)
   public Object repeat(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Repeat input) throws Exception {
     var actor=identity.require(auth,"reservations:create");Ids.uuid(id);
     var rows=db.queryForList("SELECT seat_id,purpose FROM reservations WHERE id=? AND user_id=?",id,actor.id());
@@ -109,19 +108,35 @@ public class Reservations {
   }
 
   @PostMapping("/api/v1/reservations/{id}/check-in")
-  @Transactional
+  @Transactional(isolation=Isolation.READ_COMMITTED)
   public Object checkIn(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody CheckIn input) throws Exception {
     var actor=identity.require(auth,"reservations:checkin");Ids.uuid(id);String k=key(key),fp=Ids.hash("CHECKIN"+id+input.code());var replay=replay(actor.id(),k,fp);if(replay!=null)return Api.ok(replay);
     var rows=db.queryForList("SELECT * FROM reservations WHERE id=? AND user_id=? FOR UPDATE",id,actor.id());if(rows.isEmpty())throw Api.fail(404,"RESERVATION_NOT_FOUND","预约不存在");var r=rows.getFirst();
     if(r.get("status").equals("CHECKED_IN")){var result=view(id,actor.id(),true);save(actor.id(),k,fp,result);return Api.ok(result);}
     if(!r.get("status").equals("CONFIRMED"))throw Api.fail(409,"INVALID_STATE","当前预约不能签到");
-    Instant start=((Timestamp)r.get("start_at")).toInstant(),now=Instant.now();if(now.isBefore(start)||now.isAfter(start.plus(Duration.ofMinutes(15))))throw Api.fail(409,"CHECKIN_WINDOW_CLOSED","仅可在开始后15分钟内签到");
+    Instant start=((Timestamp)r.get("start_at")).toInstant(),now=policy.now();if(!ReservationPolicy.checkInOpen(now,start))throw Api.fail(409,"CHECKIN_WINDOW_CLOSED","仅可在开始至开始后15分钟之前签到");
     LocalDate date=LocalDate.ofInstant(start,ZoneId.of("Asia/Shanghai"));String expected=checkinCode((String)r.get("room_id"),date);if(!expected.equals(input.code()))throw Api.fail(409,"INVALID_CHECKIN_CODE","签到码不正确");
-    db.update("UPDATE reservations SET status='CHECKED_IN',checked_in_at=CURRENT_TIMESTAMP(6),checkin_code_date=? WHERE id=?",java.sql.Date.valueOf(date),id);var result=view(id,actor.id(),true);save(actor.id(),k,fp,result);return Api.ok(result);
+    db.update("UPDATE reservations SET status='CHECKED_IN',checked_in_at=CURRENT_TIMESTAMP(6),checkin_code_date=? WHERE id=?",java.sql.Date.valueOf(date),id);var result=view(id,actor.id(),true);save(actor.id(),k,fp,result);audit.record(actor.id(),"CHECKED_IN","M1_RESERVATION",id,"现场编码签到");return Api.ok(result);
   }
 
   @GetMapping("/api/v1/reservations/violations") public Object violations(@RequestHeader(value="Authorization",required=false)String auth){var a=identity.require(auth,"reservations:read");return Api.ok(db.queryForList("SELECT id,reservation_id AS reservationId,reason,created_at AS createdAt FROM violation_records WHERE user_id=? ORDER BY created_at DESC",a.id()));}
-  @GetMapping("/api/v1/admin/reservation-statistics") public Object statistics(@RequestHeader(value="Authorization",required=false)String auth){identity.require(auth,"reservations:stats");Map<String,Object> out=new LinkedHashMap<>();out.put("byStatus",db.queryForList("SELECT status,COUNT(*) AS count FROM reservations GROUP BY status ORDER BY status"));out.put("byRoom",db.queryForList("SELECT rm.name AS roomName,COUNT(*) AS count FROM reservations r JOIN rooms rm ON rm.id=r.room_id GROUP BY rm.id,rm.name ORDER BY count DESC"));out.put("byStartHour",db.queryForList("SELECT HOUR(start_at) AS hour,COUNT(*) AS count FROM reservations GROUP BY HOUR(start_at) ORDER BY hour"));out.put("violations",db.queryForObject("SELECT COUNT(*) FROM violation_records",Integer.class));return Api.ok(out);}
+  @GetMapping("/api/v1/admin/reservation-statistics")
+  public Object statistics(@RequestHeader(value="Authorization",required=false)String auth,
+      @RequestParam(required=false)LocalDate from,@RequestParam(required=false)LocalDate to,
+      @RequestParam(required=false)String roomId){
+    identity.require(auth,"reservations:stats");
+    if(from!=null&&to!=null&&to.isBefore(from))throw Api.fail(400,"INVALID_DATE_RANGE","结束日期不能早于开始日期");
+    StringBuilder where=new StringBuilder(" WHERE 1=1");List<Object> args=new ArrayList<>();
+    if(from!=null){where.append(" AND r.start_at>=?");args.add(Timestamp.from(from.atStartOfDay(RoomRules.ZONE).toInstant()));}
+    if(to!=null){where.append(" AND r.start_at<?");args.add(Timestamp.from(to.plusDays(1).atStartOfDay(RoomRules.ZONE).toInstant()));}
+    if(roomId!=null&&!roomId.isBlank()){Ids.uuid(roomId);where.append(" AND r.room_id=?");args.add(roomId);}
+    Map<String,Object> out=new LinkedHashMap<>();
+    out.put("byStatus",db.queryForList("SELECT CASE WHEN r.status='CHECKED_IN' AND r.end_at<=CURRENT_TIMESTAMP THEN 'COMPLETED' ELSE r.status END AS status,COUNT(*) AS count FROM reservations r"+where+" GROUP BY CASE WHEN r.status='CHECKED_IN' AND r.end_at<=CURRENT_TIMESTAMP THEN 'COMPLETED' ELSE r.status END ORDER BY status",args.toArray()));
+    out.put("byRoom",db.queryForList("SELECT rm.name AS roomName,COUNT(*) AS count,SUM(CASE WHEN r.status IN ('CONFIRMED','CHECKED_IN') THEN TIMESTAMPDIFF(SECOND,r.start_at,r.end_at)/3600.0 ELSE 0 END) AS reservationHours FROM reservations r JOIN rooms rm ON rm.id=r.room_id"+where+" GROUP BY rm.id,rm.name ORDER BY count DESC",args.toArray()));
+    out.put("byStartHour",db.queryForList("SELECT HOUR(DATE_ADD(r.start_at,INTERVAL 8 HOUR)) AS hour,COUNT(*) AS count FROM reservations r"+where+" GROUP BY HOUR(DATE_ADD(r.start_at,INTERVAL 8 HOUR)) ORDER BY hour",args.toArray()));
+    out.put("violations",db.queryForObject("SELECT COUNT(*) FROM violation_records v JOIN reservations r ON r.id=v.reservation_id"+where,Integer.class,args.toArray()));
+    return Api.ok(out);
+  }
 
   String checkinCode(String roomId,LocalDate date){String hash=Ids.hash(identity.key()+"|"+roomId+"|"+date);long value=Long.parseLong(hash.substring(0,12),16)%1000000;return String.format(Locale.ROOT,"%06d",value);}
 
@@ -142,7 +157,7 @@ public class Reservations {
         db.queryForList(
             "SELECT r.*,s.code AS seat_code,rm.name AS room_name,rm.building FROM reservations r"
                 + " JOIN seats s ON s.id=r.seat_id JOIN rooms rm ON rm.id=r.room_id WHERE"
-                + " r.user_id=? ORDER BY r.start_at DESC LIMIT ? OFFSET ?",
+                + " r.user_id=? ORDER BY r.start_at DESC,r.id LIMIT ? OFFSET ?",
             actor.id(),
             pageSize,
             (page - 1) * pageSize);
@@ -164,7 +179,7 @@ public class Reservations {
   }
 
   @PostMapping("/api/v1/reservations/{id}/cancel")
-  @Transactional
+  @Transactional(isolation=Isolation.READ_COMMITTED)
   public Object cancel(
       @RequestHeader(value = "Authorization", required = false) String auth,
       @RequestHeader(value = "Idempotency-Key", required = false) String key,
@@ -184,28 +199,15 @@ public class Reservations {
     if (!"CONFIRMED".equals(reservation.get("status")))
       throw Api.fail(409, "RESERVATION_NOT_ACTIVE", "预约已经取消或不能再操作");
     Instant startAt = ((Timestamp) reservation.get("start_at")).toInstant();
-    if (!Instant.now().isBefore(startAt))
+    if (!policy.now().isBefore(startAt))
       throw Api.fail(409, "RESERVATION_STARTED", "预约开始后不能取消");
     db.update(
         "UPDATE reservations SET status='CANCELLED',cancelled_at=CURRENT_TIMESTAMP(6) WHERE id=?",
         id);
     var result = view(id, actor.id(), true);
     save(actor.id(), idempotencyKey, fingerprint, result);
+    audit.record(actor.id(),"RESERVATION_CANCELLED","M1_RESERVATION",id,"用户主动取消预约");
     return Api.ok(result);
-  }
-
-  static void validateWindow(Instant start, Instant end, boolean enforceAdvance) {
-    if (start.getEpochSecond() % 3600 != 0 || end.getEpochSecond() % 3600 != 0)
-      throw Api.fail(400, "WHOLE_HOUR_REQUIRED", "预约时间必须为整点");
-    Duration duration = Duration.between(start, end);
-    if (duration.isNegative() || duration.isZero() || duration.compareTo(MAX_DURATION) > 0)
-      throw Api.fail(400, "INVALID_DURATION", "预约时长必须为 1 至 4 小时");
-    if (enforceAdvance) {
-      Instant now = Instant.now();
-      if (!start.isAfter(now)) throw Api.fail(409, "START_IN_PAST", "预约开始时间必须晚于当前时间");
-      if (start.isAfter(now.plus(MAX_ADVANCE)))
-        throw Api.fail(409, "START_TOO_LATE", "只能预约未来 7 天内的时段");
-    }
   }
 
   private String key(String value) {
@@ -257,6 +259,7 @@ public class Reservations {
     for (String name :
         List.of("id", "seat_id", "room_id", "seat_code", "room_name", "building", "status", "purpose"))
       result.put(name, row.get(name));
+    result.put("display_status", "CHECKED_IN".equals(row.get("status")) && !((Timestamp)row.get("end_at")).toInstant().isAfter(policy.now()) ? "COMPLETED" : row.get("status"));
     result.put("start_at", ((Timestamp) row.get("start_at")).toInstant().toString());
     result.put("end_at", ((Timestamp) row.get("end_at")).toInstant().toString());
     result.put("created_at", ((Timestamp) row.get("created_at")).toInstant().toString());

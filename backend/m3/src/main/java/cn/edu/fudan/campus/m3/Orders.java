@@ -100,9 +100,30 @@ public class Orders {
     return get(id, actor);
   }
 
-  @Transactional public Map<String,Object> assign(Identity.Actor actor,String key,String id,Assignment input){
-    require(actor,"workorders:assign");Ids.key(key);Ids.uuid(id);Ids.uuid(input.repairerId());String fp=Ids.hash("assign|"+id+"|"+input.toString()),prior=prior(actor.id(),key,fp);if(prior!=null)return get(prior,actor);
-    var o=locked(id);expect((String)o.get("state"),"REPORTED");db.update("UPDATE work_orders SET state='ASSIGNED',repairer_id=?,repairer_name=?,repairer_email=?,assigned_at=CURRENT_TIMESTAMP(6) WHERE id=?",input.repairerId(),input.repairerName(),input.repairerEmail(),id);remember(actor.id(),key,fp,id);audit(actor.id(),"ASSIGNED",id);notify((String)o.get("reporter_id"),(String)o.get("reporter_email"),"工单「"+o.get("title")+"」已派给 "+input.repairerName());notify(input.repairerId(),input.repairerEmail(),"新工单「"+o.get("title")+"」已分配给你");return get(id,actor);
+  public Map<String,Object> assignmentReplay(Identity.Actor actor, String key, String id, Assignment input) {
+    require(actor, "workorders:assign");
+    String previous = prior(actor.id(), key, Ids.hash("assign|" + id + "|" + input.toString()));
+    return previous == null ? null : get(previous, actor);
+  }
+
+  @Transactional
+  public Map<String,Object> assign(Identity.Actor actor, String key, String id, Assignment input,
+      WorkerDirectory.Worker worker) {
+    require(actor, "workorders:assign"); Ids.key(key); Ids.uuid(id); Ids.uuid(input.repairerId());
+    if (!input.repairerId().equals(worker.id()))
+      throw Api.fail(409, "REPAIRER_NOT_AVAILABLE", "维修人员校验结果与请求不一致");
+    var order = locked(id);
+    var replay = assignmentReplay(actor, key, id, input);
+    if (replay != null) return replay;
+    expect((String) order.get("state"), "REPORTED");
+    db.update("UPDATE work_orders SET state='ASSIGNED',repairer_id=?,repairer_name=?,repairer_email=?,"
+        + "assigned_at=CURRENT_TIMESTAMP(6) WHERE id=?", worker.id(), worker.displayName(), worker.email(), id);
+    remember(actor.id(), key, Ids.hash("assign|" + id + "|" + input.toString()), id);
+    audit(actor.id(), "ASSIGNED", id);
+    notify((String) order.get("reporter_id"), (String) order.get("reporter_email"),
+        "工单「" + order.get("title") + "」已派给 " + worker.displayName());
+    notify(worker.id(), worker.email(), "新工单「" + order.get("title") + "」已分配给你");
+    return get(id, actor);
   }
   @Transactional
   public Map<String, Object> complete(Identity.Actor actor, String key, String id, Note input) {

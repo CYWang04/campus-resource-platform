@@ -74,7 +74,8 @@ class OrdersDatabaseTest {
   String assigned() {
     String id = report();
     orders.assign(MANAGER, key(), id,
-        new Orders.Assignment(TECHNICIAN.id(), TECHNICIAN.displayName(), TECHNICIAN.email()));
+        new Orders.Assignment(TECHNICIAN.id(), TECHNICIAN.displayName(), TECHNICIAN.email()),
+        new WorkerDirectory.Worker(TECHNICIAN.id(), TECHNICIAN.displayName(), TECHNICIAN.email()));
     return id;
   }
   String repairing() {

@@ -1,19 +1,245 @@
 <script setup lang="ts">
+import RefreshButton from "../components/RefreshButton.vue";
 import { onMounted, ref } from "vue";
 import { command, read } from "../api";
 import { useSession } from "../session";
-const session=useSession();
-interface Room{id:string;name:string;availabilityVersion:number}
-interface App{id:string;roomName:string;purpose:string;startAt:string;endAt:string;state:string;applicantId:string}
-const rooms=ref<Room[]>([]),items=ref<App[]>([]),busy=ref(false);
-const form=ref({roomId:"",startAt:"",duration:2,attendeeCount:20,purpose:""});
-const labels:Record<string,string>={DEPARTMENT_PENDING:"待院系审批",RESOURCE_PENDING:"待资源审批",RESOURCE_SYNC_PENDING:"正在核验资源",APPROVED:"已批准",REJECTED:"已驳回",WITHDRAW_SYNC_PENDING:"正在释放教室",WITHDRAWN:"已撤销",CONFLICT:"资源冲突",EXPIRED:"已超时"};
-async function load(){items.value=await read<App[]>("/room-applications");rooms.value=(await read<{items:Room[]}>("/rooms")).items}
-async function submit(){const room=rooms.value.find(r=>r.id===form.value.roomId);if(!room)return;busy.value=true;try{const start=new Date(form.value.startAt);await command("/room-applications",{roomId:room.id,roomName:room.name,startAt:start.toISOString(),endAt:new Date(start.getTime()+form.value.duration*3600000).toISOString(),attendeeCount:form.value.attendeeCount,purpose:form.value.purpose,expectedAvailabilityVersion:room.availabilityVersion},crypto.randomUUID());form.value={roomId:"",startAt:"",duration:2,attendeeCount:20,purpose:""};await load()}finally{busy.value=false}}
-async function review(a:App,decision:string){busy.value=true;try{await command(`/room-applications/${a.id}/review`,{decision,comment:decision==="APPROVE"?"同意申请":"申请不符合使用要求"},crypto.randomUUID());await load()}finally{busy.value=false}}
-async function withdraw(a:App){busy.value=true;try{await command(`/room-applications/${a.id}/withdraw`,{},crypto.randomUUID());await load()}finally{busy.value=false}}
+const session = useSession();
+interface Room {
+  id: string;
+  name: string;
+  availabilityVersion: number;
+}
+interface App {
+  id: string;
+  roomName: string;
+  purpose: string;
+  startAt: string;
+  endAt: string;
+  state: string;
+  applicantId: string;
+}
+const rooms = ref<Room[]>([]),
+  items = ref<App[]>([]),
+  busy = ref(false);
+const form = ref({
+  roomId: "",
+  startAt: "",
+  duration: 2,
+  attendeeCount: 20,
+  purpose: "",
+});
+const labels: Record<string, string> = {
+  DEPARTMENT_PENDING: "待院系审批",
+  RESOURCE_PENDING: "待资源审批",
+  RESOURCE_SYNC_PENDING: "正在核验资源",
+  APPROVED: "已批准",
+  REJECTED: "已驳回",
+  WITHDRAW_SYNC_PENDING: "正在释放教室",
+  WITHDRAWN: "已撤销",
+  CONFLICT: "资源冲突",
+  EXPIRED: "已超时",
+};
+async function load() {
+  items.value = await read<App[]>("/room-applications");
+  rooms.value = (await read<{ items: Room[] }>("/rooms")).items;
+}
+async function submit() {
+  const room = rooms.value.find((r) => r.id === form.value.roomId);
+  if (!room) return;
+  busy.value = true;
+  try {
+    const start = new Date(form.value.startAt);
+    await command(
+      "/room-applications",
+      {
+        roomId: room.id,
+        roomName: room.name,
+        startAt: start.toISOString(),
+        endAt: new Date(
+          start.getTime() + form.value.duration * 3600000,
+        ).toISOString(),
+        attendeeCount: form.value.attendeeCount,
+        purpose: form.value.purpose,
+        expectedAvailabilityVersion: room.availabilityVersion,
+      },
+      crypto.randomUUID(),
+    );
+    form.value = {
+      roomId: "",
+      startAt: "",
+      duration: 2,
+      attendeeCount: 20,
+      purpose: "",
+    };
+    await load();
+  } finally {
+    busy.value = false;
+  }
+}
+async function review(a: App, decision: string) {
+  busy.value = true;
+  try {
+    await command(
+      `/room-applications/${a.id}/review`,
+      {
+        decision,
+        comment: decision === "APPROVE" ? "同意申请" : "申请不符合使用要求",
+      },
+      crypto.randomUUID(),
+    );
+    await load();
+  } finally {
+    busy.value = false;
+  }
+}
+async function withdraw(a: App) {
+  busy.value = true;
+  try {
+    await command(
+      `/room-applications/${a.id}/withdraw`,
+      {},
+      crypto.randomUUID(),
+    );
+    await load();
+  } finally {
+    busy.value = false;
+  }
+}
 onMounted(load);
 </script>
-<template><section><div class="page-title"><div><span class="eyebrow">M2 · 教室申请</span><h1>整教室申请与审批</h1><p>院系和资源管理员依次审批，最终检查个人预约及维修冲突。</p></div><el-button @click="load">刷新</el-button></div>
-<article v-if="session.user?.permissions.includes('roomapplications:create')" class="panel"><h2>提交申请</h2><el-form label-position="top" @submit.prevent="submit"><div class="form-grid"><el-form-item label="教室"><el-select v-model="form.roomId"><el-option v-for="r in rooms" :key="r.id" :label="r.name" :value="r.id"/></el-select></el-form-item><el-form-item label="开始时间（整点）"><el-input v-model="form.startAt" type="datetime-local" step="3600"/></el-form-item><el-form-item label="时长"><el-select v-model="form.duration"><el-option v-for="h in [1,2,3,4,5,6,7,8]" :key="h" :label="h+' 小时'" :value="h"/></el-select></el-form-item><el-form-item label="人数"><el-input-number v-model="form.attendeeCount" :min="1" :max="300"/></el-form-item></div><el-form-item label="用途"><el-input v-model="form.purpose" maxlength="500"/></el-form-item><el-button native-type="submit" type="primary" :loading="busy" :disabled="!form.roomId||!form.startAt||!form.purpose">提交申请</el-button></el-form></article>
-<article class="panel"><h2>{{session.user?.permissions.some(p=>p.startsWith('roomapplications:approve'))?'审批队列':'我的申请'}}</h2><el-table :data="items"><el-table-column prop="roomName" label="教室"/><el-table-column prop="purpose" label="用途"/><el-table-column label="使用时间" min-width="210"><template #default="{row}">{{new Date(row.startAt).toLocaleString()}}<br/>至 {{new Date(row.endAt).toLocaleString()}}</template></el-table-column><el-table-column label="状态"><template #default="{row}"><el-tag>{{labels[row.state]??row.state}}</el-tag></template></el-table-column><el-table-column label="操作" min-width="220"><template #default="{row}"><el-button v-if="row.state==='DEPARTMENT_PENDING'&&session.user?.permissions.includes('roomapplications:approve:department')" text @click="review(row,'APPROVE')">院系通过</el-button><el-button v-if="row.state==='RESOURCE_PENDING'&&session.user?.permissions.includes('roomapplications:approve:resource')" text @click="review(row,'APPROVE')">资源通过</el-button><el-button v-if="['DEPARTMENT_PENDING','RESOURCE_PENDING'].includes(row.state)&&session.user?.permissions.some(p=>p.startsWith('roomapplications:approve'))" text type="danger" @click="review(row,'REJECT')">驳回</el-button><el-button v-if="row.applicantId===session.user?.id&&['DEPARTMENT_PENDING','RESOURCE_PENDING','APPROVED'].includes(row.state)" type="danger" plain size="small" :disabled="busy" @click="withdraw(row)">撤销申请</el-button></template></el-table-column></el-table><p class="muted">待审批不占用教室；个人预约或维修冲突会使最终资源核验失败。</p></article></section></template>
+<template>
+  <section>
+    <div class="page-title">
+      <div>
+        <span class="eyebrow">03 / ROOM APPLICATIONS</span>
+        <h1>让讨论，有处发生。</h1>
+        <p>院系和资源管理员依次审批，最终检查个人预约及维修冲突。</p>
+      </div>
+      <RefreshButton :refresh="load">刷新</RefreshButton>
+    </div>
+    <article
+      v-if="session.user?.permissions.includes('roomapplications:create')"
+      class="panel"
+    >
+      <h2>提交申请</h2>
+      <el-form label-position="top" @submit.prevent="submit"
+        ><div class="form-grid">
+          <el-form-item label="教室"
+            ><el-select v-model="form.roomId"
+              ><el-option
+                v-for="r in rooms"
+                :key="r.id"
+                :label="r.name"
+                :value="r.id" /></el-select></el-form-item
+          ><el-form-item label="开始时间（整点）"
+            ><el-input
+              v-model="form.startAt"
+              type="datetime-local"
+              step="3600" /></el-form-item
+          ><el-form-item label="时长"
+            ><el-select v-model="form.duration"
+              ><el-option
+                v-for="h in [1, 2, 3, 4, 5, 6, 7, 8]"
+                :key="h"
+                :label="h + ' 小时'"
+                :value="h" /></el-select></el-form-item
+          ><el-form-item label="人数"
+            ><el-input-number v-model="form.attendeeCount" :min="1" :max="300"
+          /></el-form-item>
+        </div>
+        <el-form-item label="用途"
+          ><el-input v-model="form.purpose" maxlength="500" /></el-form-item
+        ><el-button
+          native-type="submit"
+          type="primary"
+          :loading="busy"
+          :disabled="!form.roomId || !form.startAt || !form.purpose"
+          >提交申请</el-button
+        ></el-form
+      >
+    </article>
+    <article class="panel">
+      <h2>
+        {{
+          session.user?.permissions.some((p) =>
+            p.startsWith("roomapplications:approve"),
+          )
+            ? "审批队列"
+            : "我的申请"
+        }}
+      </h2>
+      <el-table :data="items"
+        ><el-table-column prop="roomName" label="教室" /><el-table-column
+          prop="purpose"
+          label="用途"
+        /><el-table-column label="使用时间" min-width="210"
+          ><template #default="{ row }"
+            >{{ new Date(row.startAt).toLocaleString() }}<br />至
+            {{ new Date(row.endAt).toLocaleString() }}</template
+          ></el-table-column
+        ><el-table-column label="状态"
+          ><template #default="{ row }"
+            ><el-tag>{{ labels[row.state] ?? row.state }}</el-tag></template
+          ></el-table-column
+        ><el-table-column label="操作" min-width="220"
+          ><template #default="{ row }"
+            ><div class="table-actions approval-actions">
+              <el-button
+                v-if="
+                  row.state === 'DEPARTMENT_PENDING' &&
+                  session.user?.permissions.includes(
+                    'roomapplications:approve:department',
+                  )
+                "
+                text
+                @click="review(row, 'APPROVE')"
+                >院系通过</el-button
+              ><el-button
+                v-if="
+                  row.state === 'RESOURCE_PENDING' &&
+                  session.user?.permissions.includes(
+                    'roomapplications:approve:resource',
+                  )
+                "
+                text
+                @click="review(row, 'APPROVE')"
+                >资源通过</el-button
+              ><el-button
+                v-if="
+                  ['DEPARTMENT_PENDING', 'RESOURCE_PENDING'].includes(
+                    row.state,
+                  ) &&
+                  session.user?.permissions.some((p) =>
+                    p.startsWith('roomapplications:approve'),
+                  )
+                "
+                text
+                type="danger"
+                @click="review(row, 'REJECT')"
+                >驳回</el-button
+              ><el-button
+                v-if="
+                  row.applicantId === session.user?.id &&
+                  [
+                    'DEPARTMENT_PENDING',
+                    'RESOURCE_PENDING',
+                    'APPROVED',
+                  ].includes(row.state)
+                "
+                type="danger"
+                plain
+                size="small"
+                :disabled="busy"
+                @click="withdraw(row)"
+                >撤销申请</el-button
+              >
+            </div></template
+          ></el-table-column
+        ></el-table
+      >
+      <p class="muted">
+        待审批不占用教室；个人预约或维修冲突会使最终资源核验失败。
+      </p>
+    </article>
+  </section>
+</template>

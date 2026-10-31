@@ -20,6 +20,9 @@ public class RoomApplications {
       @NotBlank @Size(max=500) String purpose, @Min(0) long expectedAvailabilityVersion) {}
   public record Review(@NotBlank @Pattern(regexp="APPROVE|REJECT") String decision,
       @Size(max=500) String comment) {}
+  public record MaintenanceCancellation(
+      @NotBlank String eventId, @NotBlank String roomId, @Min(1) long sourceVersion,
+      @NotBlank String maintenanceSourceId, @NotBlank @Size(max=500) String reason) {}
 
   @Transactional(isolation=Isolation.READ_COMMITTED)
   public Map<String,Object> create(Identity.Actor actor, String key, Create input) {
@@ -77,70 +80,82 @@ public class RoomApplications {
     remember(actor.id(),key,fp,id); audit(actor.id(),"WITHDRAW_REQUESTED",id); return get(id,actor);
   }
 
-  public record MaintenanceCancellation(@NotBlank String eventId,@NotBlank String roomId,
-      @Min(1) long sourceVersion,@NotBlank String maintenanceSourceId) {}
-
   @Transactional(isolation=Isolation.READ_COMMITTED)
-  public Map<String,Object> maintenanceCancellation(String id,MaintenanceCancellation input){
-    Ids.uuid(id);Ids.uuid(input.eventId());Ids.uuid(input.roomId());Ids.uuid(input.maintenanceSourceId());
-    var app=locked(id);
-    if(!Objects.equals(app.get("room_id"),input.roomId()))throw Api.fail(409,"SOURCE_ROOM_CONFLICT","取消事件教室不匹配");
-    if(input.sourceVersion()>((Number)app.get("source_version")).longValue())throw Api.fail(409,"SOURCE_VERSION_CONFLICT","取消事件版本尚未创建");
-    String fp=Ids.hash(id+"|"+input.toString());
-    var seen=db.queryForList("SELECT fingerprint FROM application_resource_events WHERE event_id=?",input.eventId());
-    if(!seen.isEmpty()){
-      if(!fp.equals(seen.getFirst().get("fingerprint")))throw Api.fail(409,"IDEMPOTENCY_CONFLICT","事件编号已用于其他内容");
-    }else{
-      db.update("INSERT INTO application_resource_events(event_id,application_id,fingerprint) VALUES(?,?,?)",input.eventId(),id,fp);
-      cancelForMaintenance(app);
+  public Map<String, Object> cancelForMaintenance(String id, MaintenanceCancellation event) {
+    Ids.uuid(id);
+    Ids.uuid(event.eventId());
+    Ids.uuid(event.roomId());
+    Ids.uuid(event.maintenanceSourceId());
+    var app = locked(id);
+    String fingerprint = Ids.hash(id + "|" + event.toString());
+    var previous = db.queryForList(
+        "SELECT fingerprint FROM application_cancellation_events WHERE event_id=?", event.eventId());
+    if (!previous.isEmpty()) {
+      if (!fingerprint.equals(previous.getFirst().get("fingerprint")))
+        throw Api.fail(409, "CANCELLATION_EVENT_CONFLICT", "事件编号已经用于其他内容");
+      return Map.of("eventId", event.eventId(), "applicationId", id, "state", app.get("state"));
     }
-    return Map.of("applicationId",id,"state",db.queryForObject("SELECT state FROM room_applications WHERE id=?",String.class,id));
+    if (!event.roomId().equals(app.get("room_id")))
+      throw Api.fail(409, "SOURCE_ROOM_CONFLICT", "取消事件与申请教室不一致");
+    if (event.sourceVersion() < 1
+        || event.sourceVersion() > ((Number) app.get("source_version")).longValue())
+      throw Api.fail(409, "SOURCE_VERSION_CONFLICT", "取消事件引用了未知申请来源版本");
+
+    db.update("INSERT INTO application_cancellation_events"
+            + "(event_id,application_id,fingerprint,maintenance_source_id,source_version) VALUES(?,?,?,?,?)",
+        event.eventId(), id, fingerprint, event.maintenanceSourceId(), event.sourceVersion());
+    cancelApplicationForMaintenance(app, event.reason());
+    return Map.of("eventId", event.eventId(), "applicationId", id, "state",
+        db.queryForObject("SELECT state FROM room_applications WHERE id=?", String.class, id));
+  }
+
+  // Both the callback and a replayed resource result use this transaction-local transition.
+  private void cancelApplicationForMaintenance(Map<String,Object> app, String reason) {
+    String id=(String)app.get("id"), state=(String)app.get("state");
+    if (!Set.of("APPROVED","RESOURCE_SYNC_PENDING","WITHDRAW_SYNC_PENDING").contains(state)) return;
+    db.update("UPDATE room_applications SET state='CANCELLED_MAINTENANCE',review_comment=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",reason,id);
+    db.update("UPDATE application_sync_tasks SET status='SUPERSEDED',last_error=? WHERE application_id=? AND status='PENDING'","申请已因维修取消",id);
+    audit("SYSTEM","MAINTENANCE_CANCELLED",id);
+    db.update("INSERT INTO application_notification_tasks(id,event_key,application_id,user_id,email,message) VALUES(?,?,?,?,?,?)",
+        Ids.uuid(),"M2_MAINTENANCE_CANCELLED:"+id,id,app.get("applicant_id"),app.get("applicant_email"),
+        "您的整教室申请（"+app.get("room_name")+"）因教室维修已取消，维修结束后需重新申请。");
   }
 
   @Transactional(isolation=Isolation.READ_COMMITTED)
-  public void applied(String taskId,String sourceState){
-    var tasks=pendingTask(taskId);if(tasks.isEmpty())return;
-    var task=tasks.getFirst();String id=(String)task.get("application_id");
+  public void applied(String taskId, String currentSourceState) {
+    if (!Set.of("ACTIVE","RELEASED","CANCELLED").contains(currentSourceState))
+      throw new IllegalStateException("Invalid current resource state");
+    var task=pendingTask(taskId); if(task==null)return;
+    String id=(String)task.get("application_id");
+    if (currentSourceState.equals("CANCELLED")) {
+      cancelApplicationForMaintenance(locked(id),"教室紧急维修，原整教室申请已取消");
+      // An older restored task may still be pending after the application became terminal.
+      db.update("UPDATE application_sync_tasks SET status='SUPERSEDED',last_error='资源已因维修取消' WHERE id=?",taskId);
+      return;
+    }
     boolean activate=task.get("desired_state").equals("ACTIVE");
-    if(activate&&sourceState.equals("CANCELLED")){cancelForMaintenance(locked(id));db.update("UPDATE application_sync_tasks SET status='CANCELLED',last_error='资源已因维修取消' WHERE id=?",taskId);return;}
-    if(activate&&!sourceState.equals("ACTIVE")){
+    if(activate&&!currentSourceState.equals("ACTIVE")) {
       failed(taskId,"SOURCE_NOT_ACTIVE","资源来源已解除，批准未生效");return;
     }
-    if(!activate&&!Set.of("RELEASED","CANCELLED").contains(sourceState)){
+    if(!activate&&!currentSourceState.equals("RELEASED"))
       throw new IllegalStateException("Resource release not confirmed");
-    }
     String expected=activate?"RESOURCE_SYNC_PENDING":"WITHDRAW_SYNC_PENDING",next=activate?"APPROVED":"WITHDRAWN";
     int changed=db.update("UPDATE room_applications SET state=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND state=? AND source_version=?",next,id,expected,task.get("source_version"));
-    db.update("UPDATE application_sync_tasks SET status='APPLIED',last_error=NULL WHERE id=?",taskId);
+    db.update("UPDATE application_sync_tasks SET status=?,last_error=NULL WHERE id=?",changed==1?"APPLIED":"SUPERSEDED",taskId);
     if(changed==1)audit("SYSTEM",next,id);
   }
-
-  @Transactional(isolation=Isolation.READ_COMMITTED)
-  public void failed(String taskId,String code,String message){
-    var tasks=pendingTask(taskId);if(tasks.isEmpty())return;
-    var task=tasks.getFirst();
-    db.update("UPDATE application_sync_tasks SET status='FAILED',last_error=? WHERE id=?",message,taskId);
-    if(task.get("desired_state").equals("ACTIVE"))db.update("UPDATE room_applications SET state='CONFLICT',review_comment=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND state='RESOURCE_SYNC_PENDING'",message,task.get("application_id"));
-    audit("SYSTEM",code,(String)task.get("application_id"));
-  }
-
-  private List<Map<String,Object>> pendingTask(String taskId){
-    var refs=db.queryForList("SELECT application_id FROM application_sync_tasks WHERE id=?",taskId);
-    if(refs.isEmpty())return List.of();
-    locked((String)refs.getFirst().get("application_id"));
-    return db.queryForList("SELECT * FROM application_sync_tasks WHERE id=? AND status='PENDING' FOR UPDATE",taskId);
-  }
-
-  private void cancelForMaintenance(Map<String,Object> app){
-    String state=(String)app.get("state"),id=(String)app.get("id");
-    if(!Set.of("RESOURCE_SYNC_PENDING","APPROVED","WITHDRAW_SYNC_PENDING").contains(state))return;
-    db.update("UPDATE room_applications SET state='CANCELLED_MAINTENANCE',review_comment='教室维修，原申请已取消，请在恢复后重新申请',updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",id);
-    db.update("UPDATE application_sync_tasks SET status='CANCELLED',last_error='教室维修取消' WHERE application_id=? AND status='PENDING'",id);
-    db.update("INSERT IGNORE INTO application_notification_tasks(id,event_key,user_id,email,message) VALUES(?,?,?,?,?)",Ids.uuid(),"MAINTENANCE_CANCELLED:"+id,app.get("applicant_id"),app.get("applicant_email"),"整教室申请因紧急维修而取消，维修结束后请重新申请");
-    audit("SYSTEM","MAINTENANCE_CANCELLED",id);
-  }
-
+  @Transactional(isolation=Isolation.READ_COMMITTED) public void failed(String taskId,String code,String message){ var t=pendingTask(taskId); if(t==null)return; db.update("UPDATE application_sync_tasks SET status='FAILED',last_error=? WHERE id=?",message,taskId); if(t.get("desired_state").equals("ACTIVE")) db.update("UPDATE room_applications SET state='CONFLICT',review_comment=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND state='RESOURCE_SYNC_PENDING' AND source_version=?",message,t.get("application_id"),t.get("source_version")); audit("SYSTEM",code,(String)t.get("application_id")); }
   @Transactional(isolation=Isolation.READ_COMMITTED) public void expireDue(){ for(var a:db.queryForList("SELECT * FROM room_applications WHERE state IN ('DEPARTMENT_PENDING','RESOURCE_PENDING') AND (updated_at < CURRENT_TIMESTAMP - INTERVAL 24 HOUR OR start_at<=CURRENT_TIMESTAMP) FOR UPDATE")){ db.update("UPDATE room_applications SET state='EXPIRED',updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",a.get("id")); audit("SYSTEM","EXPIRED",(String)a.get("id")); } }
+
+  // Every transition locks the application before its tasks, including cancellation callbacks.
+  private Map<String,Object> pendingTask(String taskId) {
+    var found = db.queryForList("SELECT application_id FROM application_sync_tasks WHERE id=?", taskId);
+    if (found.isEmpty()) return null;
+    locked((String) found.getFirst().get("application_id"));
+    var pending = db.queryForList(
+        "SELECT * FROM application_sync_tasks WHERE id=? AND status='PENDING' FOR UPDATE", taskId);
+    return pending.isEmpty() ? null : pending.getFirst();
+  }
 
   private Map<String,Object> locked(String id){var r=db.queryForList("SELECT * FROM room_applications WHERE id=? FOR UPDATE",id);if(r.isEmpty())throw Api.fail(404,"APPLICATION_NOT_FOUND","教室申请不存在");return r.getFirst();}
   private void task(Map<String,Object>a,String id,long v,String desired,Number expected){db.update("INSERT INTO application_sync_tasks(id,application_id,room_id,source_version,desired_state,expected_availability_version,request_id) VALUES(?,?,?,?,?,?,?)",Ids.uuid(),id,a.get("room_id"),v,desired,expected,Trace.id());}

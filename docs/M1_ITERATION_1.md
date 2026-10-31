@@ -42,7 +42,7 @@
 | 页面 | [学习空间](../web/src/views/Rooms.vue)、[预约](../web/src/views/Reservations.vue)、[资源管理](../web/src/views/M1Admin.vue)：楼宇/插座筛选、时段选择、手动签到、分页、已结束展示、编辑启停、策略与统计 |
 | 性能入口 | 路由懒加载；座位占用单次 SQL 返回全部座位，取代按座位查询。教室列表仍按教室聚合，未做负载基准 |
 
-数据库只新增 [M1 V5](../backend/m1/src/main/resources/db/migration/V5__m1_policy_and_consistency.sql) 与 [M2 V3](../backend/m2/src/main/resources/db/migration/V3__maintenance_cancellation.sql)，分别在自己的数据库迁移。没有修改旧迁移；M3 业务代码未改动。契约更新为 [OpenAPI 0.4.0](../contracts/foundation.openapi.json)，Nginx/Vite 补相应路由，CI 增加时间夹具和 M1 专项检查。
+当时新增 M1 V5 与 PR 旧版 M2 V3，分别在自己的数据库迁移。2026-10-31 整合已保留 [M1 V5](../backend/m1/src/main/resources/db/migration/V5__m1_policy_and_consistency.sql)，M2 改为沿用 [main V3](../backend/m2/src/main/resources/db/migration/V3__maintenance_cancellations.sql)，移除未合入的重复 V3 源文件；不能将已应用旧版 V3 的库直接套用为新版。旧库保留并隔离，详见 [PR5_COMPATIBILITY](PR5_COMPATIBILITY.md)。当时没有修改旧迁移，M3 业务代码未改动；以下 OpenAPI 0.4.0、Nginx/Vite 和验证记录保留历史含义，当前契约为 [OpenAPI 0.5.0](../contracts/foundation.openapi.json)。
 
 ## 2026-10-26 实际执行的验证
 

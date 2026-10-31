@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Campus Resource Foundation",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "description": "已实现 M1 资源管理、条件筛选、预约、每日动态码签到、提醒、爽约违约、历史复用和统计，M2 整教室审批，以及 M3 派单维修验收评价。真实 SMTP 和 Agent 不在本增量范围。内部路由仅服务网络开放；命令使用 Idempotency-Key，同键异内容返回 409。"
   },
   "paths": {
@@ -5471,9 +5471,10 @@
         "x-required-permission": "resources:manage"
       }
     },
-    "/internal/v1/room-applications/{id}/maintenance-cancellations": {
+    "/internal/v1/room-applications/{id}/maintenance-cancellation": {
       "post": {
-        "summary": "M1 可靠投递维修取消：幂等并保护终态",
+        "summary": "M1 通知 M2：整教室申请已因维修失效",
+        "description": "内部接收端已实现，M1 事务内失效来源、事件生产及可靠投递仍待接入。禁止向公网开放。事件、申请状态、审计和通知任务在同一事务内落库；不代表邮件已送达。",
         "tags": [
           "Internal"
         ],
@@ -5493,39 +5494,26 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "操作成功；data/requestId 信封。",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {},
-                    "requestId": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "data",
-                    "requestId"
-                  ]
-                }
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceCancellation"
+              },
+              "example": {
+                "eventId": "60000000-0000-0000-0000-000000000001",
+                "roomId": "10000000-0000-0000-0000-000000000001",
+                "sourceVersion": 1,
+                "maintenanceSourceId": "50000000-0000-0000-0000-000000000001",
+                "reason": "教室紧急维修"
               }
             }
-          },
+          }
+        },
+        "responses": {
           "400": {
             "description": "输入错误",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "会话无效",
             "content": {
               "application/json": {
                 "schema": {
@@ -5564,8 +5552,57 @@
               }
             }
           },
-          "503": {
-            "description": "依赖不可用",
+          "200": {
+            "description": "取消事件已在 M2 事务中处理。重复事件返回当前状态；CANCELLED_MAINTENANCE 为终态，通知异步投递。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "eventId",
+                        "applicationId",
+                        "state"
+                      ],
+                      "properties": {
+                        "eventId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "applicationId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "description": "申请当前状态；已有其他终态不改写"
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "eventId": "60000000-0000-0000-0000-000000000001",
+                    "applicationId": "20000000-0000-0000-0000-000000000001",
+                    "state": "CANCELLED_MAINTENANCE"
+                  },
+                  "requestId": "example-request"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "处理未确认；发送方使用相同事件内容重试。",
             "content": {
               "application/json": {
                 "schema": {
@@ -5574,19 +5611,7 @@
               }
             }
           }
-        },
-        "x-required-permission": "service:M1",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MaintenanceCancellation"
-              }
-            }
-          }
-        },
-        "description": "当前共享服务凭证仍需后续按调用方拆分；接收事件、业务取消、审计与通知任务在同一本地事务内落库。"
+        }
       }
     }
   },
@@ -5876,13 +5901,31 @@
       },
       "ReservationCreate": {
         "type": "object",
-        "required": ["seatId", "startAt", "endAt", "purpose"],
+        "required": [
+          "seatId",
+          "startAt",
+          "endAt",
+          "purpose"
+        ],
         "description": "新预约按当前 reservation-policy 校验未来时段和时长；开始/结束为整点，按上海开放时间校验。",
         "properties": {
-          "seatId": {"type": "string", "format": "uuid"},
-          "startAt": {"type": "string", "format": "date-time"},
-          "endAt": {"type": "string", "format": "date-time"},
-          "purpose": {"type": "string", "minLength": 1, "maxLength": 200}
+          "seatId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
         }
       },
       "CheckIn": {
@@ -6008,12 +6051,14 @@
           "eventId",
           "roomId",
           "sourceVersion",
-          "maintenanceSourceId"
+          "maintenanceSourceId",
+          "reason"
         ],
         "properties": {
           "eventId": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "description": "M1 事务内生成并持久化的事件编号；重试不得换号或修改内容"
           },
           "roomId": {
             "type": "string",
@@ -6022,11 +6067,18 @@
           "sourceVersion": {
             "type": "integer",
             "format": "int64",
-            "minimum": 1
+            "minimum": 1,
+            "description": "维修使其失效的 M2 来源版本，不能大于 M2 已知版本"
           },
           "maintenanceSourceId": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "description": "导致取消的 M3 维修工单来源 ID"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
           }
         }
       },

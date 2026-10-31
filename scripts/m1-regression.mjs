@@ -130,9 +130,9 @@ try{
   await eventually(()=>api(`/room-applications/${application.id}`,{token:student}),v=>v.state==='CANCELLED_MAINTENANCE','Maintenance cancellation did not converge');
   await eventually(()=>api('/admin/resource-sync-tasks'),rows=>rows.some(t=>t.applicationId===application.id&&t.status==='SENT'),'Cancellation callback not acknowledged');
   const taskRow=sql('m1',`SELECT id,source_version,maintenance_source_id FROM resource_cancellation_tasks WHERE application_id='${application.id}'`).split('\t');
-  const event={eventId:taskRow[0],roomId:joint.room.id,sourceVersion:Number(taskRow[1]),maintenanceSourceId:taskRow[2]};
-  assert.equal(internal('m2','POST',`/internal/v1/room-applications/${application.id}/maintenance-cancellations`,event).state,'CANCELLED_MAINTENANCE');
-  internal('m2','POST',`/internal/v1/room-applications/${application.id}/maintenance-cancellations`,{...event,maintenanceSourceId:randomUUID()},409);
+  const event={eventId:taskRow[0],roomId:joint.room.id,sourceVersion:Number(taskRow[1]),maintenanceSourceId:taskRow[2],reason:'教室紧急维修，原整教室申请已取消'};
+  assert.equal(internal('m2','POST',`/internal/v1/room-applications/${application.id}/maintenance-cancellation`,event).state,'CANCELLED_MAINTENANCE');
+  internal('m2','POST',`/internal/v1/room-applications/${application.id}/maintenance-cancellation`,{...event,maintenanceSourceId:randomUUID()},409);
   const blocked=await api(`/rooms/${joint.room.id}/seats?startAt=${encodeURIComponent(at(0))}&endAt=${encodeURIComponent(at(1))}`,{token:student});
   assert.ok(blocked.every(s=>!s.available));
   effect(sourceB,{...activeB,operationId:randomUUID(),sourceVersion:2,desiredState:'RELEASED'});
@@ -142,8 +142,8 @@ try{
   const revived=effect(application.id,{...originalEffect,operationId:randomUUID(),sourceVersion:2,expectedAvailabilityVersion:current},409,'M2_ROOM_APPLICATION');assert.equal(revived.code,'SOURCE_TERMINAL');
   // Restore a stale pending task to emulate recovery from an older outbox snapshot.
   sql('m2',`UPDATE application_sync_tasks SET status='PENDING',next_attempt=CURRENT_TIMESTAMP WHERE id='${op}'`);
-  await eventually(()=>api(`/room-applications/${application.id}`,{token:student}),v=>v.state==='CANCELLED_MAINTENANCE'&&v.operations[0].status==='CANCELLED','Late success resurrected application or left task pending');
-  const messages=await eventually(()=>api('/notifications',{token:student}),rows=>rows.some(n=>n.message.includes('整教室申请因紧急维修')),'Cancellation notification not delivered');
+  await eventually(()=>api(`/room-applications/${application.id}`,{token:student}),v=>v.state==='CANCELLED_MAINTENANCE'&&v.operations[0].status==='SUPERSEDED','Late success resurrected application or left task pending');
+  const messages=await eventually(()=>api('/notifications',{token:student}),rows=>rows.some(n=>n.message.includes('因教室维修已取消')),'Cancellation notification not delivered');
   assert.ok(messages.some(n=>n.message.includes('重新申请')));
   const history=await api('/reservations?page=1&pageSize=1',{token:student});assert.equal(history.items.length,1);assert.ok(history.total>=3);
   assert.ok((await api('/admin/resource-audit-events')).some(e=>e.action==='MAINTENANCE_CANCELLED'));

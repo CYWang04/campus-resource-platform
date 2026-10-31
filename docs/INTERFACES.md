@@ -6,6 +6,8 @@
 
 已确认业务政策见 [DECISIONS](DECISIONS.md) U06～U08；下列具体接口方案仍属 P05/P11。课程原要求见 [REQUIREMENTS](REQUIREMENTS.md)。
 
+2026-10-29 M2 增量：已编写维修取消接收端及机器可读契约，见 [M2 接手任务](M2_BACKEND.md)。M1 事件生产、永久失效与投递尚待接入，不能认为下文整条可靠性链路已完成。新增接口及 schema 仍待相关组评审。
+
 ## 统一约定提案
 
 | 项目 | 约定 |
@@ -108,7 +110,7 @@
 
 F04 至少固定：来源枚举、资源版本推进点、幂等键作用域及保存周期、操作结果查询的路由与权限、校验字段、错误码、状态机终态、服务调用凭证格式，以及正常/冲突/重试/乱序示例。详细契约须受影响组评审，当前草案不能替代评审。
 
-## 2026-10-26 已实现增量（OpenAPI 0.4.0，待评审）
+## M1 已实现增量（2026-10-31 对齐 OpenAPI 0.5.0，待评审）
 
 | 接口 | 权限与行为 |
 | --- | --- |
@@ -118,13 +120,17 @@ F04 至少固定：来源枚举、资源版本推进点、幂等键作用域及�
 | GET `/api/v1/rooms/{id}/check-in-code` | `resources:manage`；学生返回 403；仅返回指定教室上海日期的每日码 |
 | GET `/api/v1/admin/resource-audit-events` | `audit:read`；最近 100 条 M1 资源/预约事件 |
 | GET `/api/v1/admin/resource-sync-tasks` | `resources:manage`；最近 100 条维修取消回调状态及安全错误摘要 |
-| POST `/internal/v1/room-applications/{id}/maintenance-cancellations` | 服务密钥；eventId、roomId、sourceVersion、maintenanceSourceId；同事件同内容去重，不同内容 409 |
+| POST `/internal/v1/room-applications/{id}/maintenance-cancellation` | 服务密钥；eventId、roomId、sourceVersion、maintenanceSourceId、reason；同事件同内容去重，不同内容 409 CANCELLATION_EVENT_CONFLICT |
 
 资源公开查询支持楼宇、插座和成对 startAt/endAt；有时段时按当前策略校验。未传时段查询当前状态。列表、座位详情和创建共用院系/启用/开放规则；实际创建在锁内再次核验。院系空值表示全校，资源管理员可查看全部院系。资源编辑的 ACTIVE_RESERVATIONS 冲突包含有效整室占用；移动座位返回 SEAT_ROOM_IMMUTABLE。
 
 内部资源操作结果同时返回历史 `sourceState` 与实际 `currentSourceState`。例如旧 ACTIVE 操作成功后被维修取消，再次重放仍返回历史 ACTIVE，但 currentSourceState=CANCELLED 并带 invalidatedBy。M2 必须以当前状态收敛，不能凭历史 APPLIED 恢复批准。CANCELLED 来源收到新的 ACTIVE 返回 SOURCE_TERMINAL，RELEASED 不抹除取消终态。来源范围不可改换教室。
 
-M1 的 resource_cancellation_tasks 和 M2 的 application_resource_events/application_notification_tasks 构成取消闭环。接收方先锁申请、后锁同步任务；HTTP 位于本地事务之外，连接/读取超时为 3/5 秒，失败持久化后递增重试间隔，最长 60 秒。并不保证三个服务同一时刻原子提交。
+M1 的 resource_cancellation_tasks 和 M2 的 application_cancellation_events/application_notification_tasks 构成取消闭环。沿用 main 的 M2 V3 及其 application_id 非空约束，不保留 PR 旧版重复 V3。sourceVersion 是被取消的 M2 来源版本；reason 必填、最多 500 字符，同一事件重试保持全部字段稳定。M1 当前发送固定原因“教室紧急维修，原整教室申请已取消”。
+
+接收方先锁申请、后锁同步任务；取消回调和 currentSourceState=CANCELLED 共用同一本地事务更新申请、SUPERSEDED 同步任务、一次审计及通知。通知使用 M2_MAINTENANCE_CANCELLED:<申请ID> 唯一事件键并写入 application_id，仅由 ApplicationNotificationWorker 投递，避免两个 Worker 重复发送。通知落库失败会回滚整次取消。历史 ACTIVE 响应若当前为 RELEASED，不批准旧申请；迟到结果不能复活取消终态。
+
+HTTP 位于本地事务之外，连接/读取超时为 3/5 秒，失败持久化后递增重试间隔，最长 60 秒。并不保证三个服务同一时刻原子提交。升级约束及本机验证见 [PR5_COMPATIBILITY](PR5_COMPATIBILITY.md)。
 
 预约列表新增 displayStatus；已结束的已签到记录展示 COMPLETED，原 status 仍为 CHECKED_IN。统计支持 from/to（含首尾的上海日期，按 startAt 归属）及 roomId；byStartHour 为上海小时，byRoom.reservationHours 排除取消和违约。利用率、审计汇总和完整筛选仍未实现。
 

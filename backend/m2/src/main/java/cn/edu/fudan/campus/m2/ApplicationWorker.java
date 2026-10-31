@@ -15,12 +15,12 @@ public class ApplicationWorker {
   private final JdbcTemplate db;
   private final RoomApplications applications;
   private final Identity identity;
-  private final RestClient client,notices;
+  private final RestClient client;
 
   public ApplicationWorker(JdbcTemplate db,RoomApplications applications,Identity identity,
-      @Value("${campus.resource-url}")String resourceUrl,@Value("${campus.notification-url}")String noticeUrl){
+      @Value("${campus.resource-url}")String resourceUrl){
     this.db=db;this.applications=applications;this.identity=identity;
-    this.client=client(resourceUrl);this.notices=client(noticeUrl);
+    this.client=client(resourceUrl);
   }
 
   private static RestClient client(String url){
@@ -48,18 +48,6 @@ public class ApplicationWorker {
         applications.applied(id,state);
       }catch(HttpClientErrorException e){applications.failed(id,"RESOURCE_CONFLICT","资源冲突，申请未生效");}
       catch(RestClientException|IllegalStateException e){retry("application_sync_tasks",task,"资源服务暂不可用，将继续重试");}
-    }
-  }
-
-  @Scheduled(fixedDelay=3000)
-  public void deliverNotifications(){
-    for(var task:db.queryForList("SELECT * FROM application_notification_tasks WHERE status='PENDING' AND next_attempt<=CURRENT_TIMESTAMP LIMIT 20")){
-      try{
-        notices.post().uri("/internal/v1/notifications").header("X-Service-Key",identity.key())
-            .body(Map.of("eventId",task.get("event_key"),"userId",task.get("user_id"),"email",task.get("email"),"message",task.get("message")))
-            .retrieve().toBodilessEntity();
-        db.update("UPDATE application_notification_tasks SET status='SENT',last_error=NULL WHERE id=?",task.get("id"));
-      }catch(RestClientException e){retry("application_notification_tasks",task,"通知服务暂不可用，将继续重试");}
     }
   }
 

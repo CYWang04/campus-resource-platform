@@ -112,13 +112,4 @@ public class DeliveryWorker {
     }
   }
 
-  @Scheduled(fixedDelay = 60000)
-  public void escalateOverdue() {
-    for (var order : db.queryForList("SELECT * FROM work_orders WHERE (state='ASSIGNED' AND assigned_at<CURRENT_TIMESTAMP-INTERVAL 24 HOUR AND escalation_level<1) OR (state='REPAIRING' AND started_at<CURRENT_TIMESTAMP-INTERVAL 48 HOUR AND escalation_level<2)")) {
-      int level = order.get("state").equals("ASSIGNED") ? 1 : 2;
-      db.update("UPDATE work_orders SET escalation_level=?,escalated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND escalation_level<?",level,order.get("id"),level);
-      db.update("INSERT INTO notifications(id,user_id,email,message) VALUES(?,?,?,?)",Ids.uuid(),order.get("reporter_id"),order.get("reporter_email"),"工单「"+order.get("title")+"」已超时升级，管理员将跟进处理");
-      db.update("INSERT INTO audit_events(id,actor_id,action,order_id,request_id) VALUES(?,?,?,?,?)",Ids.uuid(),"SYSTEM","ESCALATED_LEVEL_"+level,order.get("id"),Trace.id());
-    }
-  }
 }

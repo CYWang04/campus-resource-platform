@@ -100,11 +100,51 @@ public class Orders {
     return get(id, actor);
   }
 
-  @Transactional public Map<String,Object> assign(Identity.Actor actor,String key,String id,Assignment input){
-    require(actor,"workorders:assign");Ids.key(key);Ids.uuid(id);Ids.uuid(input.repairerId());String fp=Ids.hash("assign|"+id+"|"+input.toString()),prior=prior(actor.id(),key,fp);if(prior!=null)return get(prior,actor);
-    var o=locked(id);expect((String)o.get("state"),"REPORTED");db.update("UPDATE work_orders SET state='ASSIGNED',repairer_id=?,repairer_name=?,repairer_email=?,assigned_at=CURRENT_TIMESTAMP(6) WHERE id=?",input.repairerId(),input.repairerName(),input.repairerEmail(),id);remember(actor.id(),key,fp,id);audit(actor.id(),"ASSIGNED",id);notify((String)o.get("reporter_id"),(String)o.get("reporter_email"),"工单「"+o.get("title")+"」已派给 "+input.repairerName());notify(input.repairerId(),input.repairerEmail(),"新工单「"+o.get("title")+"」已分配给你");return get(id,actor);
+  public Map<String,Object> assignmentReplay(Identity.Actor actor, String key, String id, Assignment input) {
+    require(actor, "workorders:assign");
+    String previous = prior(actor.id(), key, Ids.hash("assign|" + id + "|" + input.toString()));
+    return previous == null ? null : get(previous, actor);
   }
-  @Transactional public Map<String,Object> complete(Identity.Actor actor,String key,String id,Note input){require(actor,"workorders:repair");var result=action(actor,key,id,"complete");db.update("UPDATE work_orders SET completion_note=?,completed_at=CURRENT_TIMESTAMP(6) WHERE id=?",input.note(),id);return get(id,actor);}
+
+  @Transactional
+  public Map<String,Object> assign(Identity.Actor actor, String key, String id, Assignment input,
+      WorkerDirectory.Worker worker) {
+    require(actor, "workorders:assign"); Ids.key(key); Ids.uuid(id); Ids.uuid(input.repairerId());
+    if (!input.repairerId().equals(worker.id()))
+      throw Api.fail(409, "REPAIRER_NOT_AVAILABLE", "维修人员校验结果与请求不一致");
+    var order = locked(id);
+    var replay = assignmentReplay(actor, key, id, input);
+    if (replay != null) return replay;
+    expect((String) order.get("state"), "REPORTED");
+    db.update("UPDATE work_orders SET state='ASSIGNED',repairer_id=?,repairer_name=?,repairer_email=?,"
+        + "assigned_at=CURRENT_TIMESTAMP(6) WHERE id=?", worker.id(), worker.displayName(), worker.email(), id);
+    remember(actor.id(), key, Ids.hash("assign|" + id + "|" + input.toString()), id);
+    audit(actor.id(), "ASSIGNED", id);
+    notify((String) order.get("reporter_id"), (String) order.get("reporter_email"),
+        "工单「" + order.get("title") + "」已派给 " + worker.displayName());
+    notify(worker.id(), worker.email(), "新工单「" + order.get("title") + "」已分配给你");
+    return get(id, actor);
+  }
+  @Transactional
+  public Map<String, Object> complete(Identity.Actor actor, String key, String id, Note input) {
+    require(actor, "workorders:repair");
+    Ids.key(key);
+    Ids.uuid(id);
+    String fingerprint = Ids.hash("complete-with-note|" + id + "|" + input.toString());
+    // Lock before the first command read so concurrent retries also see committed
+    // commands with MySQL's default REPEATABLE READ isolation.
+    var order = locked(id);
+    var replay = prior(actor.id(), key, fingerprint);
+    if (replay != null) return get(replay, actor);
+    expect((String) order.get("state"), "REPAIRING");
+    if (!actor.id().equals(order.get("repairer_id")))
+      throw Api.fail(403, "NOT_ASSIGNED", "仅本单维修人员可提交完工");
+    db.update("UPDATE work_orders SET state='AWAITING_ACCEPTANCE',completion_note=?,"
+        + "completed_at=CURRENT_TIMESTAMP(6) WHERE id=?", input.note(), id);
+    remember(actor.id(), key, fingerprint, id);
+    audit(actor.id(), "COMPLETE", id);
+    return get(id, actor);
+  }
   @Transactional public Map<String,Object> rejectAcceptance(Identity.Actor actor,String key,String id,Note input){require(actor,"workorders:accept");Ids.key(key);Ids.uuid(id);String fp=Ids.hash("reject-acceptance|"+id+"|"+input.toString()),prior=prior(actor.id(),key,fp);if(prior!=null)return get(prior,actor);var o=locked(id);expect((String)o.get("state"),"AWAITING_ACCEPTANCE");if(actor.id().equals(o.get("repairer_id")))throw Api.fail(403,"SELF_ACCEPTANCE","维修人员不能自验");db.update("UPDATE work_orders SET state='REPAIRING',acceptance_note=?,completed_at=NULL WHERE id=?",input.note(),id);remember(actor.id(),key,fp,id);audit(actor.id(),"ACCEPTANCE_REJECTED",id);notify((String)o.get("repairer_id"),(String)o.get("repairer_email"),"工单「"+o.get("title")+"」验收未通过，请继续处理");return get(id,actor);}
   @Transactional public Map<String,Object> cancel(Identity.Actor actor,String key,String id){Ids.key(key);Ids.uuid(id);String fp=Ids.hash("cancel|"+id),prior=prior(actor.id(),key,fp);if(prior!=null)return get(prior,actor);var o=locked(id);if(!actor.id().equals(o.get("reporter_id")))throw Api.fail(403,"FORBIDDEN","只能取消自己的报修");if(!List.of("REPORTED","ASSIGNED").contains(o.get("state")))throw Api.fail(409,"INVALID_STATE","当前工单不能取消");db.update("UPDATE work_orders SET state='CANCELLED' WHERE id=?",id);remember(actor.id(),key,fp,id);audit(actor.id(),"CANCELLED",id);return get(id,actor);}
   @Transactional public Map<String,Object> rate(Identity.Actor actor,String key,String id,Rating input){Ids.key(key);Ids.uuid(id);String fp=Ids.hash("rate|"+id+"|"+input.toString()),prior=prior(actor.id(),key,fp);if(prior!=null)return get(prior,actor);var o=locked(id);if(!actor.id().equals(o.get("reporter_id")))throw Api.fail(403,"FORBIDDEN","只能评价自己的报修");expect((String)o.get("state"),"CLOSED");if(o.get("rating")!=null)throw Api.fail(409,"ALREADY_RATED","工单已经评价");db.update("UPDATE work_orders SET rating=?,rating_comment=?,rated_at=CURRENT_TIMESTAMP(6) WHERE id=?",input.score(),input.comment(),id);remember(actor.id(),key,fp,id);audit(actor.id(),"RATED",id);return get(id,actor);}

@@ -27,9 +27,9 @@ public class ResourceCancellationWorker {
   public void deliver(){
     for(var task:db.queryForList("SELECT * FROM resource_cancellation_tasks WHERE status='PENDING' AND next_attempt<=CURRENT_TIMESTAMP ORDER BY created_at LIMIT 20")){
       try{
-        applications.post().uri("/internal/v1/room-applications/"+task.get("application_id")+"/maintenance-cancellations")
+        applications.post().uri("/internal/v1/room-applications/"+task.get("application_id")+"/maintenance-cancellation")
             .header("X-Service-Key",identity.key()).header("X-Request-Id",(String)task.get("request_id"))
-            .body(Map.of("eventId",task.get("id"),"roomId",task.get("room_id"),"sourceVersion",task.get("source_version"),"maintenanceSourceId",task.get("maintenance_source_id")))
+            .body(Map.of("eventId",task.get("id"),"roomId",task.get("room_id"),"sourceVersion",task.get("source_version"),"maintenanceSourceId",task.get("maintenance_source_id"),"reason","教室紧急维修，原整教室申请已取消"))
             .retrieve().toBodilessEntity();
         db.update("UPDATE resource_cancellation_tasks SET status='SENT',last_error=NULL WHERE id=?",task.get("id"));
       }catch(RestClientException e){

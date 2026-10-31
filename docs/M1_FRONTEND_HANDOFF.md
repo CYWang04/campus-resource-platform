@@ -1,14 +1,14 @@
 # M1 后端完善：前端接口交接
 
-更新日期：2026-10-30。范围：保留原前端界面，把 M1 后端完善所需的页面接入交给前端负责人；本文包含新增接口、已有接口变化、兼容影响和验收步骤。状态：已按当前后端源码核对；前端待接入、待人工验收，接口及迁移待受影响组评审。
+更新日期：2026-10-31。范围：保留主干前端界面，把 M1 后端完善所需的页面接入交给前端负责人；本文包含新增接口、已有接口变化、兼容影响和验收步骤。状态：已按当前后端源码核对；前端待接入、待人工验收，接口及迁移待受影响组评审。
 
-用户已明确要求不改动原前端界面。本轮撤回此前对 `web/` 的改动，保留后端、迁移、网关和契约；后续前端接入先按本文评审，不直接修改页面。
+用户已明确要求不改动原前端界面。10-30 已撤回 Agent 的页面改动；10-31 同步 main 时保留其已合入 PR #4 的视觉成果，继续保留后端、迁移、网关和契约；后续前端接入先按本文评审，不直接修改页面。
 
 ## 1. 当前代码边界与优先事项
 
-`web/` 已恢复到原始基线 `c153700`：Rooms.vue、Reservations.vue、M1Admin.vue、Applications.vue、main.ts 和 vite.config.ts 均无工作区差异。此前做过的前端路由懒加载也已撤回。布局、样式、导航及组件沿用原版，本文不规定新视觉方案。
+`web/` 与本次最新 main 基线 `d99137e` 逐字节一致，包含 PR #4 的视觉和刷新/签到码展开改动；不退回 `c153700`。此前 Agent 的路由懒加载仍未恢复。布局、样式、导航及组件沿用主干，本文不规定新视觉方案。
 
-后端完善保留在 M1/M2，数据库新增 M1 V5、M2 V3；Nginx 的新接口代理保留。用户已授权按 `M1 → main` 提交当前版本，提交与验证状态见 [HANDOFF](HANDOFF.md)。历史修复/测试记录见 [M1_ITERATION_1](M1_ITERATION_1.md)；机器可读接口见 [OpenAPI 0.4.0](../contracts/foundation.openapi.json)。
+后端完善保留在 M1/M2；M1 新增 V5，M2 沿用 main 原有 V3（不再增加另一份 V3）；Nginx 的新接口代理保留。用户已授权按 `M1 → main` 更新现有 PR #5，提交与验证状态见 [HANDOFF](HANDOFF.md)。历史修复/测试记录见 [M1_ITERATION_1](M1_ITERATION_1.md)；机器可读接口见 [OpenAPI 0.5.0](../contracts/foundation.openapi.json)。
 
 | 优先级 | 原页面当前情况 | 需要前端接入的内容 |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ GET `/reservations?page=1&pageSize=20` 的 data 为 `{items,total,page,pageSize}
 
 POST `/reservations/{id}/repeat` 仍可用，body 为 `{startAt,endAt}`，复用原座位/用途并重新检查当前政策、院系、停用、开放与占用；也可沿用前端预填再创建的流程。不能因为是历史复用就跳过可用性核验。取消接口 POST `/reservations/{id}/cancel` 不变，开始前的 CONFIRMED 才可取消。
 
-M2 的公开申请 GET 列表/详情新增可能状态 `CANCELLED_MAINTENANCE`；申请详情 operations 的 status 可能为 CANCELLED，表示旧同步任务已终止。维修解除后原申请不会重新批准，需用户重新提交。后台异步收敛期间允许短暂仍显示处理中/已批准，以刷新后的服务端状态为准。
+M2 的公开申请 GET 列表/详情新增可能状态 `CANCELLED_MAINTENANCE`；申请详情 operations 的 status 可能为 SUPERSEDED，表示旧同步任务已被终止或取代。维修解除后原申请不会重新批准，需用户重新提交。后台异步收敛期间允许短暂仍显示处理中/已批准，以刷新后的服务端状态为准。
 
 ### 4.4 资源登记、编辑与停用（已有写接口）
 
@@ -209,7 +209,7 @@ data 结构：
 
 ## 6. 内部新增接口：只交给服务端
 
-新增 POST `/internal/v1/room-applications/{id}/maintenance-cancellations` 位于 M2，由 M1 的持久化任务通过服务凭证调用。body 为 `{eventId,roomId,sourceVersion,maintenanceSourceId}`；UUID 字段须合法，sourceVersion 至少 1。成功 data 为 `{applicationId,state}`，同事件同内容去重，不同内容 409。
+POST `/internal/v1/room-applications/{id}/maintenance-cancellation` 沿用 main 的 M2 单数路径，由 M1 的持久化任务通过服务凭证调用。body 为 `{eventId,roomId,sourceVersion,maintenanceSourceId,reason}`；UUID 字段须合法，sourceVersion 至少 1 且引用被取消的 M2 来源版本，reason 非空、最多 500 字符。成功 data 为 `{eventId,applicationId,state}`，同事件同内容去重，不同内容返回 409 CANCELLATION_EVENT_CONFLICT。相同事件重试保持全部字段及 reason 稳定。
 
 M1 同事务取消占用并保存事件，M2 幂等接收、保护申请终态及生成通知。前端只读公开申请、通知及管理回调状态，不调用内部接口，也不获取 X-Service-Key。Nginx 拒绝 `/internal/` 是预期边界。
 
@@ -244,7 +244,9 @@ M1 同事务取消占用并保存事件，M2 幂等接收、保护申请终态�
 
 后端已有自动脚本为 [smoke](../scripts/smoke.mjs)、[M1 regression](../scripts/m1-regression.mjs)、[resilience](../scripts/resilience.mjs)；它们不替代上述页面验收，故障脚本会短暂停止服务，只在本地演示环境串行运行。后端依据：[ReservationPolicy](../backend/m1/src/main/java/cn/edu/fudan/campus/m1/ReservationPolicy.java)、[Resources](../backend/m1/src/main/java/cn/edu/fudan/campus/m1/Resources.java)、[Reservations](../backend/m1/src/main/java/cn/edu/fudan/campus/m1/Reservations.java)、[ResourceAudit](../backend/m1/src/main/java/cn/edu/fudan/campus/m1/ResourceAudit.java)。
 
-## 9. 本轮实际验证（2026-10-30）
+## 9. 历史实际验证（2026-10-30）
+
+以下结果对应当时恢复 `c153700` 的版本，不代表当前页面已接入。2026-10-31 保留最新 main 前端后的构建、源码比对及后端验证见 [PR5_COMPATIBILITY](PR5_COMPATIBILITY.md)。
 
 - `git diff HEAD -- web/` 为空，6 个恢复文件与 HEAD 原版一致；未保留上一轮前端功能或性能修改。恢复前的补丁/文件摘要仅存 `.work/frontend-restore-2026-10-30/`。
 - `npm run build --prefix web` 的 Vue/TypeScript 检查和生产构建通过；原版主 JS 为 1018.06 kB/gzip 337.25 kB，仍有大包提示。本轮没有为消除提示再修改前端。

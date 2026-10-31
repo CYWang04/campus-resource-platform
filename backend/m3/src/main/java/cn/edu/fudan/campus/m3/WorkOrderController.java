@@ -11,6 +11,7 @@ public class WorkOrderController {
   public record NotificationEvent(@jakarta.validation.constraints.NotBlank String eventId,@jakarta.validation.constraints.NotBlank String userId,@jakarta.validation.constraints.Email String email,@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max=500) String message){}
   private final org.springframework.web.client.RestClient resources;
   private final Orders orders;
+  private final WorkOrderAssignments assignments;
   private final Identity identity;
   private final JdbcTemplate db;
 
@@ -18,7 +19,7 @@ public class WorkOrderController {
       Orders orders,
       Identity identity,
       JdbcTemplate db,
-      @org.springframework.beans.factory.annotation.Value("${campus.resource-url}") String url) {
+      @org.springframework.beans.factory.annotation.Value("${campus.resource-url}") String url, WorkOrderAssignments assignments) {
     resources =
         org.springframework.web.client.RestClient.builder()
             .baseUrl(url)
@@ -31,6 +32,7 @@ public class WorkOrderController {
                 })
             .build();
     this.orders = orders;
+    this.assignments = assignments;
     this.identity = identity;
     this.db = db;
   }
@@ -78,7 +80,7 @@ public class WorkOrderController {
     return Api.ok(orders.action(identity.require(auth, null), key, id, action));
   }
 
-  @PostMapping("/api/v1/work-orders/{id}/assign") public Object assign(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Assignment input){return Api.ok(orders.assign(identity.require(auth,null),key,id,input));}
+  @PostMapping("/api/v1/work-orders/{id}/assign") public Object assign(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Assignment input){return Api.ok(assignments.assign(auth,key,id,input));}
   @PostMapping("/api/v1/work-orders/{id}/complete-with-note") public Object complete(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Note input){return Api.ok(orders.complete(identity.require(auth,null),key,id,input));}
   @PostMapping("/api/v1/work-orders/{id}/reject-acceptance") public Object reject(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id,@Valid @RequestBody Orders.Note input){return Api.ok(orders.rejectAcceptance(identity.require(auth,null),key,id,input));}
   @PostMapping("/api/v1/work-orders/{id}/cancel") public Object cancel(@RequestHeader(value="Authorization",required=false)String auth,@RequestHeader(value="Idempotency-Key",required=false)String key,@PathVariable String id){return Api.ok(orders.cancel(identity.require(auth,null),key,id));}

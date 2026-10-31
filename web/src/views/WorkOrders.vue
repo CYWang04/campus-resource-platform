@@ -1,14 +1,233 @@
 <script setup lang="ts">
-import {ref,onMounted} from "vue";import {read,command} from "../api";import {useSession} from "../session";
-const session=useSession();interface Order{id:string;title:string;reporterId:string;repairerId?:string;repairerName?:string;state:string;rating?:number;escalationLevel:number}interface Room{id:string;name:string}interface Worker{id:string;displayName:string;email:string}
-const orders=ref<Order[]>([]),rooms=ref<Room[]>([]),workers=ref<Worker[]>([]),busy=ref(false),form=ref({roomId:"",title:"",description:""}),notes=ref<Record<string,string>>({}),scores=ref<Record<string,number>>({});
-const labels:Record<string,string>={REPORTED:"待派单",ASSIGNED:"已派单",START_PENDING:"正在同步维修限制",REPAIRING:"维修中",AWAITING_ACCEPTANCE:"待验收",RELEASE_PENDING:"正在解除限制",CLOSED:"已关闭",CANCELLED:"已取消"};
-async function load(){orders.value=await read<Order[]>("/work-orders");rooms.value=(await read<{items:Room[]}>("/rooms")).items;if(session.user?.permissions.includes("workorders:assign"))workers.value=await read<Worker[]>("/directory/maintenance-workers")}
-async function submit(){busy.value=true;try{await command("/work-orders",form.value,crypto.randomUUID());form.value={roomId:"",title:"",description:""};await load()}finally{busy.value=false}}
-async function act(o:Order,path:string,body:unknown={}){busy.value=true;try{await command(`/work-orders/${o.id}/${path}`,body,crypto.randomUUID());await load()}finally{busy.value=false}}
-async function assign(o:Order,id:string){const w=workers.value.find(x=>x.id===id);if(w)await act(o,"assign",{repairerId:w.id,repairerName:w.displayName,repairerEmail:w.email})}
+import RefreshButton from "../components/RefreshButton.vue";
+import { ref, onMounted } from "vue";
+import { read, command } from "../api";
+import { useSession } from "../session";
+const session = useSession();
+interface Order {
+  id: string;
+  title: string;
+  reporterId: string;
+  repairerId?: string;
+  repairerName?: string;
+  state: string;
+  rating?: number;
+  escalationLevel: number;
+}
+interface Room {
+  id: string;
+  name: string;
+}
+interface Worker {
+  id: string;
+  displayName: string;
+  email: string;
+}
+const orders = ref<Order[]>([]),
+  rooms = ref<Room[]>([]),
+  workers = ref<Worker[]>([]),
+  busy = ref(false),
+  form = ref({ roomId: "", title: "", description: "" }),
+  notes = ref<Record<string, string>>({}),
+  scores = ref<Record<string, number>>({});
+const labels: Record<string, string> = {
+  REPORTED: "待派单",
+  ASSIGNED: "已派单",
+  START_PENDING: "正在同步维修限制",
+  REPAIRING: "维修中",
+  AWAITING_ACCEPTANCE: "待验收",
+  RELEASE_PENDING: "正在解除限制",
+  CLOSED: "已关闭",
+  CANCELLED: "已取消",
+};
+async function load() {
+  orders.value = await read<Order[]>("/work-orders");
+  rooms.value = (await read<{ items: Room[] }>("/rooms")).items;
+  if (session.user?.permissions.includes("workorders:assign"))
+    workers.value = await read<Worker[]>("/directory/maintenance-workers");
+}
+async function submit() {
+  busy.value = true;
+  try {
+    await command("/work-orders", form.value, crypto.randomUUID());
+    form.value = { roomId: "", title: "", description: "" };
+    await load();
+  } finally {
+    busy.value = false;
+  }
+}
+async function act(o: Order, path: string, body: unknown = {}) {
+  busy.value = true;
+  try {
+    await command(`/work-orders/${o.id}/${path}`, body, crypto.randomUUID());
+    await load();
+  } finally {
+    busy.value = false;
+  }
+}
+async function assign(o: Order, id: string) {
+  const w = workers.value.find((x) => x.id === id);
+  if (w)
+    await act(o, "assign", {
+      repairerId: w.id,
+      repairerName: w.displayName,
+      repairerEmail: w.email,
+    });
+}
 onMounted(load);
 </script>
-<template><section><div class="page-title"><div><span class="eyebrow">M3 · 物业报修</span><h1>报修、派单与验收</h1><p>维修限制在开工时生效，管理员验收通过后解除；超时工单自动升级。</p></div><el-button @click="load">刷新</el-button></div>
-<article v-if="session.user?.permissions.includes('workorders:create')" class="panel"><h2>提交报修</h2><el-form label-position="top" @submit.prevent="submit"><div class="form-grid"><el-form-item label="教室"><el-select v-model="form.roomId"><el-option v-for="r in rooms" :key="r.id" :label="r.name" :value="r.id"/></el-select></el-form-item><el-form-item label="问题标题"><el-input v-model="form.title" maxlength="200"/></el-form-item></div><el-form-item label="问题描述"><el-input v-model="form.description" type="textarea" maxlength="2000"/></el-form-item><el-button native-type="submit" type="primary" :loading="busy" :disabled="!form.roomId||!form.title||!form.description">提交报修</el-button></el-form></article>
-<article class="panel"><h2>工单进度</h2><el-table :data="orders"><el-table-column prop="title" label="问题"/><el-table-column label="状态"><template #default="{row}"><el-tag>{{labels[row.state]??row.state}}</el-tag><el-tag v-if="row.escalationLevel" type="danger">升级 L{{row.escalationLevel}}</el-tag></template></el-table-column><el-table-column prop="repairerName" label="维修人员"/><el-table-column label="操作" min-width="380"><template #default="{row}"><el-select v-if="row.state==='REPORTED'&&session.user?.permissions.includes('workorders:assign')" placeholder="派给维修人员" style="width:150px" @change="assign(row,$event)"><el-option v-for="w in workers" :key="w.id" :label="w.displayName" :value="w.id"/></el-select><el-button v-if="row.state==='ASSIGNED'&&row.repairerId===session.user?.id" text @click="act(row,'start')">开始维修</el-button><template v-if="row.state==='REPAIRING'&&row.repairerId===session.user?.id"><el-input v-model="notes[row.id]" placeholder="完工说明" style="width:140px"/><el-button text @click="act(row,'complete-with-note',{note:notes[row.id]})">提交完工</el-button></template><template v-if="row.state==='AWAITING_ACCEPTANCE'&&session.user?.permissions.includes('workorders:accept')"><el-input v-model="notes[row.id]" placeholder="验收说明" style="width:130px"/><el-button text @click="act(row,'accept')">通过</el-button><el-button text type="danger" @click="act(row,'reject-acceptance',{note:notes[row.id]})">退回</el-button></template><el-button v-if="row.reporterId===session.user?.id&&['REPORTED','ASSIGNED'].includes(row.state)" type="danger" plain size="small" :disabled="busy" @click="act(row,'cancel')">取消报修</el-button><template v-if="row.state==='CLOSED'&&row.reporterId===session.user?.id&&!row.rating"><el-rate v-model="scores[row.id]"/><el-button text @click="act(row,'rating',{score:scores[row.id]||5,comment:notes[row.id]||'已完成'})">评价</el-button></template></template></el-table-column></el-table><p class="muted">派单后 24 小时未开工、开工后 48 小时未完工将自动升级。</p></article></section></template>
+<template>
+  <section>
+    <div class="page-title">
+      <div>
+        <span class="eyebrow">04 / MAINTENANCE</span>
+        <h1>让每个问题，都有回音。</h1>
+        <p>维修限制在开工时生效，管理员验收通过后解除；超时工单自动升级。</p>
+      </div>
+      <RefreshButton :refresh="load">刷新</RefreshButton>
+    </div>
+    <article
+      v-if="session.user?.permissions.includes('workorders:create')"
+      class="panel"
+    >
+      <h2>提交报修</h2>
+      <el-form label-position="top" @submit.prevent="submit"
+        ><div class="form-grid">
+          <el-form-item label="教室"
+            ><el-select v-model="form.roomId"
+              ><el-option
+                v-for="r in rooms"
+                :key="r.id"
+                :label="r.name"
+                :value="r.id" /></el-select></el-form-item
+          ><el-form-item label="问题标题"
+            ><el-input v-model="form.title" maxlength="200"
+          /></el-form-item>
+        </div>
+        <el-form-item label="问题描述"
+          ><el-input
+            v-model="form.description"
+            type="textarea"
+            maxlength="2000" /></el-form-item
+        ><el-button
+          native-type="submit"
+          type="primary"
+          :loading="busy"
+          :disabled="!form.roomId || !form.title || !form.description"
+          >提交报修</el-button
+        ></el-form
+      >
+    </article>
+    <article class="panel">
+      <h2>工单进度</h2>
+      <el-table :data="orders"
+        ><el-table-column prop="title" label="问题" /><el-table-column
+          label="状态"
+          min-width="130"
+          ><template #default="{ row }"
+            ><div class="work-order-status">
+              <el-tag>{{ labels[row.state] ?? row.state }}</el-tag
+              ><el-tag v-if="row.escalationLevel" type="danger"
+                >升级 L{{ row.escalationLevel }}</el-tag
+              >
+            </div></template
+          ></el-table-column
+        ><el-table-column
+          prop="repairerName"
+          label="维修人员"
+        /><el-table-column label="操作" min-width="380"
+          ><template #default="{ row }"
+            ><div class="table-actions work-order-actions">
+              <el-select
+                v-if="
+                  row.state === 'REPORTED' &&
+                  session.user?.permissions.includes('workorders:assign')
+                "
+                placeholder="派给维修人员"
+                style="width: 150px"
+                @change="assign(row, $event)"
+                ><el-option
+                  v-for="w in workers"
+                  :key="w.id"
+                  :label="w.displayName"
+                  :value="w.id" /></el-select
+              ><el-button
+                v-if="
+                  row.state === 'ASSIGNED' &&
+                  row.repairerId === session.user?.id
+                "
+                text
+                @click="act(row, 'start')"
+                >开始维修</el-button
+              ><template
+                v-if="
+                  row.state === 'REPAIRING' &&
+                  row.repairerId === session.user?.id
+                "
+                ><el-input
+                  v-model="notes[row.id]"
+                  placeholder="完工说明"
+                  style="width: 140px"
+                /><el-button
+                  text
+                  @click="
+                    act(row, 'complete-with-note', { note: notes[row.id] })
+                  "
+                  >提交完工</el-button
+                ></template
+              ><template
+                v-if="
+                  row.state === 'AWAITING_ACCEPTANCE' &&
+                  session.user?.permissions.includes('workorders:accept')
+                "
+                ><el-input
+                  v-model="notes[row.id]"
+                  placeholder="验收说明"
+                  style="width: 130px"
+                /><el-button text @click="act(row, 'accept')">通过</el-button
+                ><el-button
+                  text
+                  type="danger"
+                  @click="
+                    act(row, 'reject-acceptance', { note: notes[row.id] })
+                  "
+                  >退回</el-button
+                ></template
+              ><el-button
+                v-if="
+                  row.reporterId === session.user?.id &&
+                  ['REPORTED', 'ASSIGNED'].includes(row.state)
+                "
+                type="danger"
+                plain
+                size="small"
+                :disabled="busy"
+                @click="act(row, 'cancel')"
+                >取消报修</el-button
+              ><template
+                v-if="
+                  row.state === 'CLOSED' &&
+                  row.reporterId === session.user?.id &&
+                  !row.rating
+                "
+                ><el-rate v-model="scores[row.id]" /><el-button
+                  text
+                  @click="
+                    act(row, 'rating', {
+                      score: scores[row.id] || 5,
+                      comment: notes[row.id] || '已完成',
+                    })
+                  "
+                  >评价</el-button
+                ></template
+              >
+            </div></template
+          ></el-table-column
+        ></el-table
+      >
+      <p class="muted">
+        派单后 24 小时未开工、开工后 48 小时未完工将自动升级。
+      </p>
+    </article>
+  </section>
+</template>

@@ -77,3 +77,5 @@
 2026-10-30 阶段交付准备：用户确认目前界面基本满意，并授权按课程流程提交推送及创建 PR。记录为本轮前端外观人工验收，不代表全组共识、完整业务验收或真实后端联调通过。任务分支 `feat/frontend-editorial`；范围与限制见 FRONTEND-DESIGN。下一步为组员 PR 评审及真实业务联调。
 
 2026-10-30 提交与 PR：以用户提供的 Git 署名完成前端提交 `615f8fe`，分支 `feat/frontend-editorial` 已推送至 origin，已创建 [PR #4](https://github.com/CYWang04/campus-resource-platform/pull/4) 向 main 请求评审。未合并、未部署。GitHub CI 以 PR 最新检查结果为准，不能将本地构建通过写成远端 CI 通过。下一步为组员评审、CI 检查与真实后端联调。
+
+2026-10-31 同步 main 并更新 PR：按用户要求，将 origin/main 的 `215d152` 无冲突合入前端分支，纳入团队已合并的跨时区 smoke 与 GitHub Runner Compose 恢复命令修复。保留开放的 PR #4，推送后由同一 PR 重新执行 CI。前端严格类型检查/构建、两个集成脚本语法、刷新/签到码/批注工具检查及 diff 检查通过；完整远端 CI 仍以 GitHub 实际结果为准。未合并前端 PR、未部署。

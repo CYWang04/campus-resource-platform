@@ -63,3 +63,8 @@ Docker Compose 在本地 .env 设置 M2_MIGRATION_LINEAGE=m1 或 m2；已有 .en
 选择后沿用该历史路径，不在 V4 成功后随意切换。若脚本名未知、存在失败记录或校验不匹配，保留现场核对实际数据库，不运行 repair、不改历史校验值、不删卷、不重建已有数据库。两份 V3 均保持原始字节；公共 V1/V2 也只搬目录，不改内容。
 
 旧 M1 事件收据保留原值；合法重放时补齐规范收据，不重发业务通知。旧通知 application_id 按已知事件键回填，不能关联的行保留 NULL；新增 created_at 为迁移时默认值，不是伪造旧事件发生时间。
+
+
+## 提交后的 main 同步
+
+整合提交 76a8534 已推送，并新建 [PR #7](https://github.com/CYWang04/campus-resource-platform/pull/7)。main 随后合入前端 #4 与 M3 #3；本功能分支无冲突同步至 main@d99137e，web/ 和 backend/m3/ 与该主干保持一致，原 M1/M2 修复保留。同步后后端 Maven verify 共 90 项通过（M1 10、M2 35、M3 45），本次迁移复验使用 H2；此前真实 MySQL 与 99 次 HTTP 结果的版本和边界仍见上文，不把它们冒充为同步后的全链路复验。最新远端 CI 和跨组评审以 PR #7 实际结果为准。

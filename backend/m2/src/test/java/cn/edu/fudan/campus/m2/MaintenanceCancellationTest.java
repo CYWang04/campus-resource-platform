@@ -26,7 +26,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.flywaydb.core.Flyway;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -51,10 +51,8 @@ class MaintenanceCancellationTest {
     @Bean DataSource dataSource() {
       var source = new DriverManagerDataSource(
           "jdbc:h2:mem:m2-cancellation;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1", "sa", "");
-      new ResourceDatabasePopulator(
-          new ClassPathResource("db/migration/V1__identity.sql"),
-          new ClassPathResource("db/migration/V2__room_applications.sql"),
-          new ClassPathResource("db/migration/V3__maintenance_cancellations.sql")).execute(source);
+      Flyway.configure().dataSource(source)
+          .locations("classpath:db/migration/common", "classpath:db/migration/m2").load().migrate();
       return source;
     }
     @Bean JdbcTemplate jdbcTemplate(DataSource source) { return new JdbcTemplate(source); }
@@ -66,17 +64,20 @@ class MaintenanceCancellationTest {
 
   @BeforeEach
   void prepare() {
-    for (String table : List.of("application_notification_tasks", "application_cancellation_events",
+    for (String table : List.of("application_notification_tasks", "application_cancellation_events", "application_resource_events",
         "application_audit_events", "application_sync_tasks", "application_commands",
         "room_applications", "sessions", "permissions", "users")) db.update("DELETE FROM " + table);
     db.update("INSERT INTO users(id,username,display_name,email,password_hash) VALUES(?,?,?,?,?)",
         USER, "student", "Test student", "student@campus.test", "not-a-login-fixture");
+    var start = java.time.Instant.now().plus(java.time.Duration.ofDays(2)).truncatedTo(java.time.temporal.ChronoUnit.HOURS);
     db.update("INSERT INTO room_applications(id,applicant_id,applicant_email,room_id,room_name,purpose,"
             + "attendee_count,start_at,end_at,state,source_version,expected_availability_version)"
-            + " VALUES(?,?,?,?,?,?,?,TIMESTAMP '2027-01-01 10:00:00',TIMESTAMP '2027-01-01 12:00:00',?,1,0)",
-        APP, USER, "student@campus.test", ROOM, "Test room", "Meeting", 20, "APPROVED");
+            + " VALUES(?,?,?,?,?,?,?,?,?,?,1,0)",
+        APP, USER, "student@campus.test", ROOM, "Test room", "Meeting", 20,
+        java.sql.Timestamp.from(start), java.sql.Timestamp.from(start.plusSeconds(7200)), "APPROVED");
     http = MockMvcBuilders.standaloneSetup(new MaintenanceCancellationController(
-        new Identity(KEY, "http://unused.invalid"), applications))
+        new Identity(KEY, "http://unused.invalid"), applications),
+        new RoomApplicationController(applications, new Identity(KEY, "http://unused.invalid"), "http://unused.invalid"))
         .setControllerAdvice(new Api.Errors()).build();
   }
 
@@ -100,7 +101,7 @@ class MaintenanceCancellationTest {
         initial.equals("WITHDRAW_SYNC_PENDING") ? 2 : 1);
     applications.cancelForMaintenance(APP, event());
     assertEquals("CANCELLED_MAINTENANCE", state());
-    assertEquals("SUPERSEDED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+    assertEquals("CANCELLED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
     assertEquals(1, count("application_cancellation_events"));
     assertEquals(1, count("application_audit_events"));
     assertEquals(1, count("application_notification_tasks"));
@@ -159,11 +160,11 @@ class MaintenanceCancellationTest {
     db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
     task("ACTIVE", 1);
     applications.cancelForMaintenance(APP, event());
-    applications.applied(TASK);
+    applications.applied(TASK, "ACTIVE");
     applications.failed(TASK, "RESOURCE_CONFLICT", "迟到失败");
     assertEquals("CANCELLED_MAINTENANCE", state());
     assertEquals(1, count("application_audit_events"));
-    assertEquals("SUPERSEDED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+    assertEquals("CANCELLED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
   }
 
   @Test
@@ -184,7 +185,7 @@ class MaintenanceCancellationTest {
     task("ACTIVE", 1);
     var start = new CountDownLatch(1);
     try (var pool = Executors.newFixedThreadPool(2)) {
-      var approval = pool.submit(() -> { start.await(); applications.applied(TASK); return null; });
+      var approval = pool.submit(() -> { start.await(); applications.applied(TASK, "ACTIVE"); return null; });
       var cancellation = pool.submit(() -> { start.await(); applications.cancelForMaintenance(APP, event()); return null; });
       start.countDown();
       approval.get(10, TimeUnit.SECONDS);
@@ -212,14 +213,124 @@ class MaintenanceCancellationTest {
   @Test
   void normalApprovalAndWithdrawalResultsStillApply() {
     db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
-    task("ACTIVE", 1); applications.applied(TASK);
+    task("ACTIVE", 1); applications.applied(TASK, "ACTIVE");
     assertEquals("APPROVED", state());
     var applicant = new Identity.Actor(USER, "student", "Student", "student@campus.test", "CS",
         List.of("roomapplications:read", "roomapplications:withdraw"));
     applications.withdraw(applicant, "withdraw-regression", APP);
     String release = db.queryForObject("SELECT id FROM application_sync_tasks WHERE desired_state='RELEASED'", String.class);
-    applications.applied(release);
+    applications.applied(release, "RELEASED");
     assertEquals("WITHDRAWN", state());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"maintenance-cancellations", "maintenance-cancellation"})
+  void bothRoutesAcceptM1PayloadWithoutReasonAndDeduplicate(String suffix) throws Exception {
+    var event = event();
+    var body = json.valueToTree(event);
+    ((com.fasterxml.jackson.databind.node.ObjectNode) body).remove("reason");
+    String url = "/internal/v1/room-applications/" + APP + "/" + suffix;
+    http.perform(post(url).header("X-Service-Key", KEY).contentType(MediaType.APPLICATION_JSON)
+        .content(json.writeValueAsString(body))).andExpect(status().isOk());
+    ((com.fasterxml.jackson.databind.node.ObjectNode) body).put("reason", RoomApplications.DEFAULT_MAINTENANCE_REASON);
+    http.perform(post("/internal/v1/room-applications/" + APP + "/maintenance-cancellation")
+        .header("X-Service-Key", KEY).contentType(MediaType.APPLICATION_JSON)
+        .content(json.writeValueAsString(body))).andExpect(status().isOk());
+    assertEquals("CANCELLED_MAINTENANCE", state());
+    assertEquals(1, count("application_cancellation_events"));
+    assertEquals(1, count("application_notification_tasks"));
+    ((com.fasterxml.jackson.databind.node.ObjectNode) body).put("reason", "   ");
+    http.perform(post(url).header("X-Service-Key", KEY).contentType(MediaType.APPLICATION_JSON)
+        .content(json.writeValueAsString(body))).andExpect(status().isBadRequest());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ACTIVE", "RELEASED"})
+  void currentCancelledSourceCancelsPendingApprovalOrWithdrawal(String desired) {
+    db.update("UPDATE room_applications SET state=? WHERE id=?",
+        desired.equals("ACTIVE") ? "RESOURCE_SYNC_PENDING" : "WITHDRAW_SYNC_PENDING", APP);
+    task(desired, desired.equals("ACTIVE") ? 1 : 2);
+    applications.applied(TASK, "CANCELLED");
+    applications.applied(TASK, "ACTIVE");
+    assertEquals("CANCELLED_MAINTENANCE", state());
+    assertEquals(1, count("application_notification_tasks"));
+  }
+
+  @Test
+  void releasedHistoricalSourceDoesNotApproveTheApplication() {
+    db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
+    task("ACTIVE", 1);
+    applications.applied(TASK, "RELEASED");
+    assertEquals("CONFLICT", state());
+  }
+
+  @Test
+  void releaseResultMustConfirmTheSourceIsActuallyReleased() {
+    db.update("UPDATE room_applications SET state='WITHDRAW_SYNC_PENDING' WHERE id=?", APP);
+    task("RELEASED", 2);
+    assertThrows(IllegalStateException.class, () -> applications.applied(TASK, "ACTIVE"));
+    assertEquals("WITHDRAW_SYNC_PENDING", state());
+    assertEquals("PENDING", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+  }
+
+  @Test
+  void oldSuccessfulCreateCanBeReplayedAfterItsStartTime() {
+    var actor = new Identity.Actor(USER, "student", "Student", "student@campus.test", "CS",
+        List.of("roomapplications:create", "roomapplications:read"));
+    var past = java.time.Instant.now().minusSeconds(86400).truncatedTo(java.time.temporal.ChronoUnit.HOURS);
+    var body = new RoomApplications.Create(ROOM, "Test room", past, past.plusSeconds(3600), 20, "Meeting", 0);
+    db.update("UPDATE room_applications SET start_at=?,end_at=? WHERE id=?",
+        java.sql.Timestamp.from(past), java.sql.Timestamp.from(past.plusSeconds(3600)), APP);
+    db.update("INSERT INTO application_commands(actor_id,idempotency_key,fingerprint,application_id) VALUES(?,?,?,?)",
+        USER, "old-successful-create", cn.edu.fudan.campus.common.Ids.hash("create|" + body), APP);
+    assertEquals(APP, applications.create(actor, "old-successful-create", body).get("id"));
+    assertEquals(1, count("room_applications"));
+  }
+
+  @Test
+  void fractionalSecondCannotBypassWholeHourValidation() {
+    var actor = new Identity.Actor(USER, "student", "Student", "student@campus.test", "CS",
+        List.of("roomapplications:create", "roomapplications:read"));
+    var start = java.time.Instant.now().plusSeconds(86400).truncatedTo(java.time.temporal.ChronoUnit.HOURS).plusNanos(1);
+    var body = new RoomApplications.Create(ROOM, "Test room", start, start.plusSeconds(3600), 20, "Meeting", 0);
+    var failure = assertThrows(Api.Failure.class, () -> applications.create(actor, "fractional-time", body));
+    assertEquals("WHOLE_HOUR_REQUIRED", failure.code);
+    assertEquals(1, count("room_applications"));
+    assertEquals(0, count("application_commands"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"CANCELLED", "MALFORMED", "SOURCE_TERMINAL"})
+  void workerUsesCurrentSourceStateAndRetriesMalformedResponse(String responseKind) throws Exception {
+    db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
+    task("ACTIVE", 1);
+    var server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    server.createContext("/internal/v1/resource-effects/", exchange -> {
+      exchange.getRequestBody().readAllBytes();
+      String body = switch (responseKind) {
+        case "SOURCE_TERMINAL" -> "{\"code\":\"SOURCE_TERMINAL\"}";
+        case "MALFORMED" -> "{\"data\":{\"status\":\"APPLIED\"}}";
+        default -> "{\"data\":{\"status\":\"APPLIED\",\"currentSourceState\":\"CANCELLED\"}}";
+      };
+      byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().add("Content-Type", "application/json");
+      exchange.sendResponseHeaders(responseKind.equals("SOURCE_TERMINAL") ? 409 : 200, bytes.length);
+      exchange.getResponseBody().write(bytes); exchange.close();
+    });
+    server.start();
+    try {
+      var worker = new ApplicationWorker(db, applications, new Identity(KEY, "http://unused.invalid"),
+          "http://localhost:" + server.getAddress().getPort());
+      worker.sync();
+      if (responseKind.equals("MALFORMED")) {
+        assertEquals("RESOURCE_SYNC_PENDING", state());
+        assertEquals(1, db.queryForObject("SELECT attempts FROM application_sync_tasks WHERE id=?", Integer.class, TASK));
+        assertEquals(0, count("application_notification_tasks"));
+      } else {
+        assertEquals("CANCELLED_MAINTENANCE", state());
+        assertEquals(1, count("application_notification_tasks"));
+      }
+    } finally { server.stop(0); }
   }
 
   @Test

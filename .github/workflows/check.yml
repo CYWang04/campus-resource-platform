@@ -16,6 +16,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - run: node --test scripts/test-slots.test.mjs
       - run: npm ci && npm run build
         working-directory: web
       - run: pwsh -File scripts/init-local.ps1
@@ -29,6 +30,7 @@ jobs:
         env:
           COMPOSE_PARALLEL_LIMIT: '1'
       - run: node scripts/smoke.mjs
+      - run: node scripts/m1-regression.mjs
       - run: node scripts/resilience.mjs
       - if: always()
         run: docker compose --env-file .env -f infra/compose.yml down

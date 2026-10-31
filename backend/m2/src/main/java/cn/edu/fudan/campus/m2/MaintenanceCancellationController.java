@@ -15,7 +15,10 @@ public class MaintenanceCancellationController {
     this.applications = applications;
   }
 
-  @PostMapping("/internal/v1/room-applications/{id}/maintenance-cancellation")
+  @PostMapping({
+    "/internal/v1/room-applications/{id}/maintenance-cancellations",
+    "/internal/v1/room-applications/{id}/maintenance-cancellation"
+  })
   public Object cancel(
       @RequestHeader(value = "X-Service-Key", required = false) String key,
       @PathVariable String id,

@@ -2,6 +2,8 @@
 
 日期：2026-10-29。分支：`m2-maintenance-cancellation`。关联：B02、B05、U08。
 
+2026-10-31 已在本地整合 M1/M2 两分支并完成后端/真实 MySQL/HTTP 检查，当前契约、双历史迁移、验证结果和剩余验收以 [整合说明](M2_RECONCILIATION.md) 为准。下文的 16 项测试及“仅接收端”范围保留原始迭代记录含义。
+
 ## 范围、约束与方案
 
 本轮交付 M2 负责的维修取消接收端、持久化通知、迟到同步结果保护和专项测试。沿用现有两级审批、服务凭证与数据库隔离，不修改已部署迁移，不重写已有预约功能。M1 的取消事件生产、来源永久失效与可靠投递由 M1 接入；本轮不能声称完整 M1→M2 链路已经验收。
@@ -26,7 +28,7 @@
 
 ## 交给 M1 的接口约定
 
-`POST /internal/v1/room-applications/{id}/maintenance-cancellation`，仅服务网络可访问。请求使用现有 `X-Service-Key`；`id` 为 M2 申请 UUID。
+当前主路径为 `POST /internal/v1/room-applications/{id}/maintenance-cancellations`，原单数路径为兼容别名，仅服务网络可访问。请求使用现有 `X-Service-Key`；`id` 为 M2 申请 UUID。
 
 ```json
 {
@@ -41,7 +43,7 @@
 - `eventId`：M1 事务内生成并持久化；重试使用相同 ID 和相同内容。
 - `sourceVersion`：失效的 `M2_ROOM_APPLICATION` 来源版本，不能大于 M2 当前已知版本。撤销与维修交错时，允许较早的已生效来源版本取消仍在释放中的申请。
 - `maintenanceSourceId`：导致失效的 M3 工单来源 ID，作为追溯证据。
-- `reason`：非空，最多 500 字符，不包含凭证或个人敏感信息。
+- `reason`：可省略，归一为“教室紧急维修”；提供时非空且最多 500 字符，不包含凭证或个人敏感信息。
 
 200 返回 `{data:{eventId,applicationId,state},requestId}`，表示本地事务已确认；不表示通知或邮件已送达。同事件内容冲突、教室不匹配或未知来源版本返回 409；申请不存在返回 404；无服务凭证返回 403；格式错误返回 400。发送方对网络失败、5xx 使用相同事件重试；明确 4xx 保留失败证据，核对契约后处理，不盲目更换事件 ID。
 

@@ -32,6 +32,7 @@ services:
       IDENTITY_URL: http://m2:8080
       RESOURCE_URL: http://m1:8080
       NOTIFICATION_URL: http://m3:8080
+      M2_MIGRATION_LINEAGE: ${M2_MIGRATION_LINEAGE:-m2}
       PORT: 8080
       SMTP_HOST: mailpit
       SMTP_PORT: 1025

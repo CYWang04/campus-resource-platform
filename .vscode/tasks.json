@@ -12,6 +12,14 @@
         "-File",
         "${workspaceFolder}/scripts/check-environment.ps1"
       ],
+      "osx": {
+        "command": "/bin/zsh",
+        "args": ["-lc", "bash scripts/check-environment.sh"]
+      },
+      "linux": {
+        "command": "bash",
+        "args": ["scripts/check-environment.sh"]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
@@ -27,6 +35,14 @@
         "${workspaceFolder}/scripts/check-environment.ps1",
         "-CheckDockerEngine"
       ],
+      "osx": {
+        "command": "/bin/zsh",
+        "args": ["-lc", "bash scripts/check-environment.sh --docker"]
+      },
+      "linux": {
+        "command": "bash",
+        "args": ["scripts/check-environment.sh", "--docker"]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     }

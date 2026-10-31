@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Campus Resource Foundation",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "已实现 M1 资源管理、条件筛选、预约、每日动态码签到、提醒、爽约违约、历史复用和统计，M2 整教室审批，以及 M3 派单维修验收评价。真实 SMTP 和 Agent 不在本增量范围。内部路由仅服务网络开放；命令使用 Idempotency-Key，同键异内容返回 409。"
   },
   "paths": {
@@ -311,7 +311,42 @@
             "bearerAuth": []
           }
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "startAt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "endAt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "powerType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "building",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "成功；公共响应为 data/requestId 信封。工单 action 返回当前状态，START_PENDING / RELEASE_PENDING 表示尚未同步生效。",
@@ -393,7 +428,8 @@
               }
             }
           }
-        }
+        },
+        "description": "院系、开放时间、启用状态、有效预约和来源限制共同决定可用性。时段必须成对提供并符合当前预约规则；available=false 时提供原因。"
       }
     },
     "/api/v1/rooms/{id}/seats": {
@@ -416,6 +452,32 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "startAt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "endAt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "powerType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -499,7 +561,8 @@
               }
             }
           }
-        }
+        },
+        "description": "院系、开放时间、启用状态、有效预约和来源限制共同决定可用性。时段必须成对提供并符合当前预约规则；available=false 时提供原因。"
       }
     },
     "/api/v1/rooms/{id}/availability": {
@@ -1559,7 +1622,7 @@
     },
     "/internal/v1/resource-effects/{sourceType}/{sourceId}": {
       "put": {
-        "summary": "M3维修来源写入/解除；operationId永久去重，来源版本严格递增",
+        "summary": "按来源占用/解除；先幂等重放后检查新占用",
         "tags": [
           "Internal"
         ],
@@ -1576,7 +1639,8 @@
             "schema": {
               "type": "string",
               "enum": [
-                "M3_MAINTENANCE"
+                "M3_MAINTENANCE",
+                "M2_ROOM_APPLICATION"
               ]
             }
           },
@@ -1598,7 +1662,9 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "data": {},
+                    "data": {
+                      "$ref": "#/components/schemas/ResourceOperationResult"
+                    },
                     "requestId": {
                       "type": "string"
                     }
@@ -2961,7 +3027,7 @@
     },
     "/api/v1/rooms/{id}/check-in-code": {
       "get": {
-        "summary": "获取教室当日动态签到码",
+        "summary": "受控展示：资源管理员读取教室当日签到码",
         "tags": [
           "Public"
         ],
@@ -3062,7 +3128,9 @@
               }
             }
           }
-        }
+        },
+        "x-required-permission": "resources:manage",
+        "description": "学生端不得读取；学生在现场输入编码。每日编码可能被转发，不能宣称完全防代签。"
       }
     },
     "/api/v1/reservations/{id}/check-in": {
@@ -3424,7 +3492,35 @@
             "bearerAuth": []
           }
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "roomId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "成功；公共响应为 data/requestId 信封。工单 action 返回当前状态，START_PENDING / RELEASE_PENDING 表示尚未同步生效。",
@@ -3506,7 +3602,8 @@
               }
             }
           }
-        }
+        },
+        "description": "from/to 为上海日期，包含结束日期；开始小时统计使用上海时区。reservationHours 表示未取消预约时长，非实际到场利用率。"
       }
     },
     "/api/v1/admin/rooms": {
@@ -3613,6 +3710,101 @@
             }
           }
         }
+      },
+      "get": {
+        "summary": "列出全部教室，含停用资源",
+        "tags": [
+          "M1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "操作成功；data/requestId 信封。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "会话无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "resources:manage"
       }
     },
     "/api/v1/admin/rooms/{id}": {
@@ -4770,10 +4962,519 @@
         }
       }
     },
-    "/internal/v1/room-applications/{id}/maintenance-cancellation": {
+    "/api/v1/reservation-policy": {
+      "get": {
+        "summary": "读取当前预约规则",
+        "tags": [
+          "M1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "操作成功；data/requestId 信封。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ReservationSettings"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "会话无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "resources:read"
+      }
+    },
+    "/api/v1/admin/reservation-policy": {
+      "put": {
+        "summary": "更新预约规则，使用乐观版本锁",
+        "tags": [
+          "M1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "操作成功；data/requestId 信封。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ReservationSettings"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "会话无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "resources:manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReservationSettings"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/rooms/{id}/seats": {
+      "get": {
+        "summary": "列出教室全部座位，含停用座位",
+        "tags": [
+          "M1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作成功；data/requestId 信封。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "会话无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "resources:manage"
+      }
+    },
+    "/api/v1/admin/resource-audit-events": {
+      "get": {
+        "summary": "读取最近100条 M1 资源与预约审计",
+        "tags": [
+          "M1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "操作成功；data/requestId 信封。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "会话无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "audit:read"
+      }
+    },
+    "/api/v1/admin/resource-sync-tasks": {
+      "get": {
+        "summary": "查看维修取消同步及失败重试",
+        "tags": [
+          "M1"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "操作成功；data/requestId 信封。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "会话无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "依赖不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-required-permission": "resources:manage"
+      }
+    },
+    "/internal/v1/room-applications/{id}/maintenance-cancellations": {
       "post": {
         "summary": "M1 通知 M2：整教室申请已因维修失效",
-        "description": "内部接收端已实现，M1 事务内失效来源、事件生产及可靠投递仍待接入。禁止向公网开放。事件、申请状态、审计和通知任务在同一事务内落库；不代表邮件已送达。",
+        "description": "M1/M2 统一维修取消接收端；事件、状态、审计与通知任务同事务。reason 可省略；重复事件不重复通知。单数路径为兼容别名。",
         "tags": [
           "Internal"
         ],
@@ -4910,7 +5611,153 @@
               }
             }
           }
-        }
+        },
+        "operationId": "receiveMaintenanceCancellation"
+      }
+    },
+    "/internal/v1/room-applications/{id}/maintenance-cancellation": {
+      "post": {
+        "summary": "维修取消接收端的单数兼容别名",
+        "description": "M1/M2 统一维修取消接收端；事件、状态、审计与通知任务同事务。reason 可省略；重复事件不重复通知。单数路径为兼容别名。",
+        "tags": [
+          "Internal"
+        ],
+        "security": [
+          {
+            "serviceKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceCancellation"
+              },
+              "example": {
+                "eventId": "60000000-0000-0000-0000-000000000001",
+                "roomId": "10000000-0000-0000-0000-000000000001",
+                "sourceVersion": 1,
+                "maintenanceSourceId": "50000000-0000-0000-0000-000000000001",
+                "reason": "教室紧急维修"
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "取消事件已在 M2 事务中处理。重复事件返回当前状态；CANCELLED_MAINTENANCE 为终态，通知异步投递。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "eventId",
+                        "applicationId",
+                        "state"
+                      ],
+                      "properties": {
+                        "eventId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "applicationId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "description": "申请当前状态；已有其他终态不改写"
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "eventId": "60000000-0000-0000-0000-000000000001",
+                    "applicationId": "20000000-0000-0000-0000-000000000001",
+                    "state": "CANCELLED_MAINTENANCE"
+                  },
+                  "requestId": "example-request"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "处理未确认；发送方使用相同事件内容重试。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "receiveMaintenanceCancellationLegacy",
+        "deprecated": true
       }
     }
   },
@@ -5198,6 +6045,35 @@
           }
         }
       },
+      "ReservationCreate": {
+        "type": "object",
+        "required": [
+          "seatId",
+          "startAt",
+          "endAt",
+          "purpose"
+        ],
+        "description": "新预约按当前 reservation-policy 校验未来时段和时长；开始/结束为整点，按上海开放时间校验。",
+        "properties": {
+          "seatId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
       "CheckIn": {
         "type": "object",
         "required": [
@@ -5287,14 +6163,41 @@
           }
         }
       },
+      "ReservationSettings": {
+        "type": "object",
+        "required": [
+          "maxDurationHours",
+          "maxAdvanceDays",
+          "version"
+        ],
+        "properties": {
+          "maxDurationHours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "default": 4
+          },
+          "maxAdvanceDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 7
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        },
+        "description": "修改时提交所读取版本；冲突返回 POLICY_VERSION_CONFLICT。仅影响新预约。"
+      },
       "MaintenanceCancellation": {
         "type": "object",
         "required": [
           "eventId",
           "roomId",
           "sourceVersion",
-          "maintenanceSourceId",
-          "reason"
+          "maintenanceSourceId"
         ],
         "properties": {
           "eventId": {
@@ -5320,9 +6223,60 @@
           "reason": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 500
+            "maxLength": 500,
+            "default": "教室紧急维修",
+            "description": "可省略或为 null 以兼容原 M1 四字段事件；统一使用固定默认原因，显式空白仍拒绝。",
+            "nullable": true
           }
         }
+      },
+      "ResourceOperationResult": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "status",
+          "sourceState",
+          "currentSourceState",
+          "roomId"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "APPLIED"
+            ]
+          },
+          "sourceState": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "RELEASED",
+              "CANCELLED"
+            ]
+          },
+          "currentSourceState": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "RELEASED",
+              "CANCELLED"
+            ]
+          },
+          "invalidatedBy": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "description": "sourceState 是该操作历史结果；currentSourceState 是当前状态。CANCELLED 来源不得以更高版本重新激活。"
       }
     }
   }

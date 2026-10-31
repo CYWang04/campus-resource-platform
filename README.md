@@ -2,7 +2,7 @@
 
 软件过程管理与工程伦理课程 PJ：自习座位预约、整教室申请与审批、物业报修，以及后续自然语言业务 Agent。
 
-> 2026-10-21：已实现 M1 资源管理、条件查询、预约、动态码签到、提醒、违约、历史复用与统计，M2 整教室两级审批，以及 M3 报修派单、维修、验收和评价。前后端构建及最新一次本地 193 项真实链路检查通过；真实 SMTP 与 Agent 暂不纳入当前开发范围。
+> 2026-10-31：PR #5 按最新 main `d99137e` 整合 M2 取消契约、迁移和通知逻辑，保留主干的前端与 M3 成果。`web/` 与此 main 基线一致，本轮不修改页面；新增接口及兼容问题见 [前端交接](docs/M1_FRONTEND_HANDOFF.md)。修复范围和实际验证见 [PR5 兼容整合](docs/PR5_COMPATIBILITY.md)、[交接记录](docs/HANDOFF.md)；远端 CI、人工页面及跨组评审仍需完成，不自动合并或部署。
 
 ## 新成员 / Agent 从这里开始
 
@@ -31,6 +31,9 @@
 | 文档 | 用途 |
 | --- | --- |
 | [HANDOFF](docs/HANDOFF.md) | 当前进度、下一步、外部条件与接手说明 |
+| [M1_ITERATION_1](docs/M1_ITERATION_1.md) | M1 最新完善范围、验证结果和剩余工作 |
+| [M1_FRONTEND_HANDOFF](docs/M1_FRONTEND_HANDOFF.md) | 保留原前端后的新增接口、字段、兼容影响及待接入事项 |
+| [PR5_COMPATIBILITY](docs/PR5_COMPATIBILITY.md) | PR #5 对齐最新 main 的接口、迁移、取消/通知修复与验收 |
 | [ACCEPTANCE](docs/ACCEPTANCE.md) | 组员启动、公开测试账号、五分钟演示、验收清单与记录模板 |
 | [REQUIREMENTS](docs/REQUIREMENTS.md) | 任务书要求、来源页码、最终验收 |
 | [DECISIONS](docs/DECISIONS.md) | 已确认选择、拟议默认值、待评审项 |

@@ -159,7 +159,7 @@ class MaintenanceCancellationTest {
     db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
     task("ACTIVE", 1);
     applications.cancelForMaintenance(APP, event());
-    applications.applied(TASK);
+    applications.applied(TASK, "ACTIVE");
     applications.failed(TASK, "RESOURCE_CONFLICT", "迟到失败");
     assertEquals("CANCELLED_MAINTENANCE", state());
     assertEquals(1, count("application_audit_events"));
@@ -184,7 +184,7 @@ class MaintenanceCancellationTest {
     task("ACTIVE", 1);
     var start = new CountDownLatch(1);
     try (var pool = Executors.newFixedThreadPool(2)) {
-      var approval = pool.submit(() -> { start.await(); applications.applied(TASK); return null; });
+      var approval = pool.submit(() -> { start.await(); applications.applied(TASK, "ACTIVE"); return null; });
       var cancellation = pool.submit(() -> { start.await(); applications.cancelForMaintenance(APP, event()); return null; });
       start.countDown();
       approval.get(10, TimeUnit.SECONDS);
@@ -212,14 +212,88 @@ class MaintenanceCancellationTest {
   @Test
   void normalApprovalAndWithdrawalResultsStillApply() {
     db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
-    task("ACTIVE", 1); applications.applied(TASK);
+    task("ACTIVE", 1); applications.applied(TASK, "ACTIVE");
     assertEquals("APPROVED", state());
     var applicant = new Identity.Actor(USER, "student", "Student", "student@campus.test", "CS",
         List.of("roomapplications:read", "roomapplications:withdraw"));
     applications.withdraw(applicant, "withdraw-regression", APP);
     String release = db.queryForObject("SELECT id FROM application_sync_tasks WHERE desired_state='RELEASED'", String.class);
-    applications.applied(release);
+    applications.applied(release, "RELEASED");
     assertEquals("WITHDRAWN", state());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"CALLBACK_FIRST", "RESULT_FIRST"})
+  void currentCancellationAndCallbackShareOneNotification(String order) {
+    db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
+    task("ACTIVE", 1);
+    var notice = event();
+    if (order.equals("CALLBACK_FIRST")) {
+      applications.cancelForMaintenance(APP, notice);
+      applications.applied(TASK, "CANCELLED");
+    } else {
+      applications.applied(TASK, "CANCELLED");
+      applications.cancelForMaintenance(APP, notice);
+    }
+    assertEquals("CANCELLED_MAINTENANCE", state());
+    assertEquals(1, count("application_cancellation_events"));
+    assertEquals(1, count("application_notification_tasks"));
+    assertEquals(1, count("application_audit_events"));
+    assertEquals(APP, db.queryForObject("SELECT application_id FROM application_notification_tasks", String.class));
+    assertEquals("SUPERSEDED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+  }
+
+  @Test
+  void restoredPendingTaskDoesNotRemainPendingOrDuplicateCancellation() {
+    task("ACTIVE", 1);
+    applications.cancelForMaintenance(APP, event());
+    db.update("UPDATE application_sync_tasks SET status='PENDING' WHERE id=?", TASK);
+    applications.applied(TASK, "CANCELLED");
+    assertEquals("CANCELLED_MAINTENANCE", state());
+    assertEquals("SUPERSEDED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+    assertEquals(1, count("application_notification_tasks"));
+    assertEquals(1, count("application_audit_events"));
+  }
+
+  @Test
+  void historicalActiveResultWithReleasedCurrentSourceCannotApprove() {
+    db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
+    task("ACTIVE", 1);
+    applications.applied(TASK, "RELEASED");
+    assertEquals("CONFLICT", state());
+    assertEquals("FAILED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+    assertEquals(0, count("application_notification_tasks"));
+  }
+
+  @Test
+  void cancelledSourceDuringWithdrawalRetainsMaintenanceTerminalState() {
+    db.update("UPDATE room_applications SET state='WITHDRAW_SYNC_PENDING' WHERE id=?", APP);
+    task("RELEASED", 2);
+    applications.applied(TASK, "CANCELLED");
+    assertEquals("CANCELLED_MAINTENANCE", state());
+    assertEquals("SUPERSEDED", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+    assertEquals(1, count("application_notification_tasks"));
+  }
+
+  @Test
+  void unknownSourceStateCannotMarkSynchronizationSuccessful() {
+    db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
+    task("ACTIVE", 1);
+    assertThrows(IllegalStateException.class, () -> applications.applied(TASK, "UNKNOWN"));
+    assertEquals("RESOURCE_SYNC_PENDING", state());
+    assertEquals("PENDING", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+  }
+
+  @Test
+  void currentSourceCancellationRollsBackWhenNoticeCannotBePersisted() {
+    db.update("UPDATE room_applications SET state='RESOURCE_SYNC_PENDING' WHERE id=?", APP);
+    task("ACTIVE", 1);
+    db.update("INSERT INTO application_notification_tasks(id,event_key,application_id,user_id,email,message) VALUES(?,?,?,?,?,?)",
+        UUID.randomUUID().toString(), "M2_MAINTENANCE_CANCELLED:" + APP, APP, USER, "student@campus.test", "collision");
+    assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> applications.applied(TASK, "CANCELLED"));
+    assertEquals("RESOURCE_SYNC_PENDING", state());
+    assertEquals("PENDING", db.queryForObject("SELECT status FROM application_sync_tasks WHERE id=?", String.class, TASK));
+    assertEquals(0, count("application_audit_events"));
   }
 
   @Test

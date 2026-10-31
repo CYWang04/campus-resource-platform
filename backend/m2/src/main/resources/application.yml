@@ -1,6 +1,10 @@
 server:
   port: ${PORT:8082}
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 3
   application:
     name: m2
   datasource:

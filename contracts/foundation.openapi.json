@@ -4769,6 +4769,149 @@
           }
         }
       }
+    },
+    "/internal/v1/room-applications/{id}/maintenance-cancellation": {
+      "post": {
+        "summary": "M1 通知 M2：整教室申请已因维修失效",
+        "description": "内部接收端已实现，M1 事务内失效来源、事件生产及可靠投递仍待接入。禁止向公网开放。事件、申请状态、审计和通知任务在同一事务内落库；不代表邮件已送达。",
+        "tags": [
+          "Internal"
+        ],
+        "security": [
+          {
+            "serviceKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceCancellation"
+              },
+              "example": {
+                "eventId": "60000000-0000-0000-0000-000000000001",
+                "roomId": "10000000-0000-0000-0000-000000000001",
+                "sourceVersion": 1,
+                "maintenanceSourceId": "50000000-0000-0000-0000-000000000001",
+                "reason": "教室紧急维修"
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "description": "输入错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "资源不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "状态、版本或幂等冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "取消事件已在 M2 事务中处理。重复事件返回当前状态；CANCELLED_MAINTENANCE 为终态，通知异步投递。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "eventId",
+                        "applicationId",
+                        "state"
+                      ],
+                      "properties": {
+                        "eventId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "applicationId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "description": "申请当前状态；已有其他终态不改写"
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "eventId": "60000000-0000-0000-0000-000000000001",
+                    "applicationId": "20000000-0000-0000-0000-000000000001",
+                    "state": "CANCELLED_MAINTENANCE"
+                  },
+                  "requestId": "example-request"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "处理未确认；发送方使用相同事件内容重试。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5141,6 +5284,43 @@
           },
           "active": {
             "type": "boolean"
+          }
+        }
+      },
+      "MaintenanceCancellation": {
+        "type": "object",
+        "required": [
+          "eventId",
+          "roomId",
+          "sourceVersion",
+          "maintenanceSourceId",
+          "reason"
+        ],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "M1 事务内生成并持久化的事件编号；重试不得换号或修改内容"
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceVersion": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "维修使其失效的 M2 来源版本，不能大于 M2 已知版本"
+          },
+          "maintenanceSourceId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "导致取消的 M3 维修工单来源 ID"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
           }
         }
       }
